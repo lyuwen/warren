@@ -1,0 +1,2008 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Warren — Aggregate Design Review</title>
+  <style>
+    :root {
+      --paper: #f5f1e8;
+      --paper-strong: #efe8dc;
+      --card: rgba(255, 255, 255, 0.62);
+      --card-strong: rgba(255, 255, 255, 0.82);
+      --line: rgba(39, 32, 24, 0.14);
+      --line-strong: rgba(39, 32, 24, 0.26);
+      --ink: #1f1a17;
+      --muted: #655d56;
+      --accent: #1d4f63;
+      --accent-soft: rgba(29, 79, 99, 0.09);
+      --code-bg: #111315;
+      --code-fg: #edf0f2;
+      --code-line: rgba(255, 255, 255, 0.12);
+      --shadow: 0 16px 50px rgba(41, 30, 18, 0.08);
+      --radius: 18px;
+      --radius-sm: 12px;
+      --content: 78ch;
+      --nav-w: 18rem;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(255,255,255,0.48), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(36,74,89,0.06), transparent 24%),
+        var(--paper);
+      font-family: Georgia, Cambria, "Times New Roman", Times, serif;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    .shell {
+      width: min(1500px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0 56px;
+    }
+
+    .frame {
+      display: grid;
+      grid-template-columns: minmax(250px, var(--nav-w)) minmax(0, 1fr);
+      gap: 28px;
+      align-items: start;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 20px;
+      align-self: start;
+      padding: 22px 20px 18px;
+      border: 1px solid var(--line);
+      background: linear-gradient(to bottom, var(--card-strong), rgba(255,255,255,0.5));
+      border-radius: calc(var(--radius) + 2px);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+
+    .sidebar .eyebrow {
+      font-size: 0.72rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+
+    .sidebar h2 {
+      margin: 0 0 10px;
+      font-size: 1.28rem;
+      line-height: 1.15;
+      font-weight: 700;
+    }
+
+    .sidebar .meta {
+      margin: 0 0 18px;
+      font-size: 0.92rem;
+      color: var(--muted);
+      line-height: 1.5;
+      max-width: 26ch;
+    }
+
+    .toc {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-height: calc(100vh - 190px);
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .toc a {
+      display: block;
+      text-decoration: none;
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.35;
+      padding: 7px 10px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      transition: 140ms ease;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+
+    .toc a:hover,
+    .toc a.active {
+      color: var(--ink);
+      background: var(--accent-soft);
+      border-color: rgba(29, 79, 99, 0.16);
+    }
+
+    .toc a.level-3 {
+      font-size: 0.84rem;
+      padding-left: 22px;
+      color: #746c66;
+    }
+
+    .content {
+      min-width: 0;
+    }
+
+    .hero {
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 4px);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.7), rgba(255,255,255,0.48)),
+        var(--paper-strong);
+      box-shadow: var(--shadow);
+      padding: 30px 34px 28px;
+      margin-bottom: 26px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image: linear-gradient(rgba(28, 36, 41, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(28, 36, 41, 0.03) 1px, transparent 1px);
+      background-size: 18px 18px;
+      mask-image: linear-gradient(to bottom, rgba(0,0,0,0.45), transparent 68%);
+      pointer-events: none;
+    }
+
+    .hero-top {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 16px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.7);
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+
+    .hero h1 {
+      position: relative;
+      z-index: 1;
+      margin: 0 0 14px;
+      font-size: clamp(2.2rem, 4vw, 4.1rem);
+      line-height: 0.96;
+      letter-spacing: -0.045em;
+      font-weight: 700;
+      max-width: 11ch;
+    }
+
+    .hero p {
+      position: relative;
+      z-index: 1;
+      margin: 0;
+      max-width: 64ch;
+      color: var(--muted);
+      font-size: 1.03rem;
+    }
+
+    article {
+      min-width: 0;
+    }
+
+    .section-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(to bottom, var(--card-strong), var(--card));
+      box-shadow: var(--shadow);
+      padding: 28px 30px;
+      margin-bottom: 22px;
+      backdrop-filter: blur(12px);
+    }
+
+    .section-card > *:first-child { margin-top: 0; }
+    .section-card > *:last-child { margin-bottom: 0; }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: clamp(1.55rem, 2.2vw, 2.1rem);
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      scroll-margin-top: 28px;
+    }
+
+    h3 {
+      margin: 28px 0 10px;
+      font-size: 1.08rem;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      text-transform: none;
+      letter-spacing: 0.01em;
+      color: var(--accent);
+    }
+
+    p, li {
+      font-size: 1.02rem;
+    }
+
+    p {
+      margin: 12px 0;
+      max-width: var(--content);
+    }
+
+    ul, ol {
+      margin: 10px 0 14px 1.3rem;
+      padding: 0;
+      max-width: var(--content);
+    }
+
+    li + li { margin-top: 6px; }
+
+    strong {
+      color: #161210;
+      font-weight: 700;
+    }
+
+    hr {
+      border: 0;
+      height: 1px;
+      background: linear-gradient(to right, transparent, var(--line-strong), transparent);
+      margin: 34px 0;
+    }
+
+    code {
+      font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 0.9em;
+      padding: 0.16rem 0.38rem;
+      border-radius: 6px;
+      background: rgba(29, 79, 99, 0.08);
+      color: #163847;
+    }
+
+    .code-figure {
+      margin: 18px 0 20px;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      overflow: hidden;
+      background: var(--code-bg);
+      box-shadow: 0 18px 34px rgba(10, 12, 15, 0.2);
+    }
+
+    .code-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--code-line);
+      background: rgba(255,255,255,0.03);
+      color: rgba(255,255,255,0.64);
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.11em;
+      font-size: 0.7rem;
+    }
+
+    pre {
+      margin: 0;
+      padding: 16px 18px 18px;
+      overflow: auto;
+      color: var(--code-fg);
+      font-size: 0.86rem;
+      line-height: 1.5;
+      font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+      background: var(--code-bg);
+      tab-size: 2;
+      white-space: pre;
+    }
+
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+      font-size: inherit;
+    }
+
+    .lead-list {
+      margin-top: 10px;
+    }
+
+    .footer-note {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.93rem;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+
+    .mobile-toc {
+      display: none;
+      margin-bottom: 18px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.74);
+      border-radius: 14px;
+      padding: 12px 14px;
+    }
+
+    .mobile-toc summary {
+      cursor: pointer;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      color: var(--ink);
+      font-weight: 600;
+    }
+
+    .mobile-toc nav {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .mobile-toc a {
+      color: var(--muted);
+      text-decoration: none;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      font-size: 0.94rem;
+    }
+
+    @media (max-width: 1080px) {
+      .frame {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .mobile-toc {
+        display: block;
+      }
+
+      .shell {
+        width: min(980px, calc(100vw - 24px));
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        width: calc(100vw - 18px);
+        padding-top: 10px;
+      }
+
+      .hero,
+      .section-card {
+        padding: 22px 18px;
+        border-radius: 16px;
+      }
+
+      .hero h1 {
+        max-width: none;
+      }
+
+      p, li {
+        font-size: 0.98rem;
+      }
+
+      pre {
+        font-size: 0.78rem;
+        padding: 14px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="frame">
+      <aside class="sidebar" aria-label="Table of contents sidebar">
+        <div class="eyebrow">Design review</div>
+        <h2>Warren</h2>
+        <p class="meta">Aggregate design review covering core architecture, session supervision, frontend surfaces, permission control, plugin management, and delivery phases.</p>
+        <nav class="toc" id="toc"><a href="#1-overview" class="level-2">1. Overview</a><a href="#2-product-vision" class="level-2">2. Product Vision</a><a href="#3-scope-and-non-goals" class="level-2">3. Scope and Non-Goals</a><a href="#in-scope" class="level-3">In scope</a><a href="#out-of-scope-for-the-current-design" class="level-3">Out of scope for the current design</a><a href="#deferred-but-expected-later" class="level-3">Deferred but expected later</a><a href="#4-core-design-principles" class="level-2">4. Core Design Principles</a><a href="#5-system-context" class="level-2">5. System Context</a><a href="#high-level-picture" class="level-3">High-level picture</a><a href="#conceptual-model" class="level-3">Conceptual model</a><a href="#6-core-architecture" class="level-2">6. Core Architecture</a><a href="#61-warren-core" class="level-3">6.1 Warren Core</a><a href="#62-remote-runtime-assumptions" class="level-3">6.2 Remote runtime assumptions</a><a href="#63-interface-surfaces" class="level-3">6.3 Interface surfaces</a><a href="#7-data-and-domain-model" class="level-2">7. Data and Domain Model</a><a href="#71-core-entities" class="level-3">7.1 Core entities</a><a href="#72-storage-direction" class="level-3">7.2 Storage direction</a><a href="#8-capture-and-parsing-pipeline" class="level-2">8. Capture and Parsing Pipeline</a><a href="#81-phase-1-capture-source" class="level-3">8.1 Phase-1 capture source</a><a href="#82-capture-pipeline" class="level-3">8.2 Capture pipeline</a><a href="#83-parser-outputs" class="level-3">8.3 Parser outputs</a><a href="#84-parser-strategy" class="level-3">8.4 Parser strategy</a><a href="#85-future-structured-source" class="level-3">8.5 Future structured source</a><a href="#9-agent-state-model" class="level-2">9. Agent State Model</a><a href="#91-canonical-states" class="level-3">9.1 Canonical states</a><a href="#92-state-priority" class="level-3">9.2 State priority</a><a href="#93-state-detection-approach" class="level-3">9.3 State detection approach</a><a href="#94-state-transitions" class="level-3">9.4 State transitions</a><a href="#10-interaction-model" class="level-2">10. Interaction Model</a><a href="#101-passive-operations" class="level-3">10.1 Passive operations</a><a href="#102-active-operations" class="level-3">10.2 Active operations</a><a href="#103-important-safety-principle" class="level-3">10.3 Important safety principle</a><a href="#11-permission-management-design" class="level-2">11. Permission Management Design</a><a href="#111-requirements" class="level-3">11.1 Requirements</a><a href="#112-permission-modes" class="level-3">11.2 Permission modes</a><a href="#113-desired-vs-observed-mode" class="level-3">11.3 Desired vs observed mode</a><a href="#114-permission-operations" class="level-3">11.4 Permission operations</a><a href="#115-open-implementation-caution" class="level-3">11.5 Open implementation caution</a><a href="#12-plugin-management-design" class="level-2">12. Plugin Management Design</a><a href="#121-requirements" class="level-3">12.1 Requirements</a><a href="#122-core-distinction" class="level-3">12.2 Core distinction</a><a href="#123-operational-value" class="level-3">12.3 Operational value</a><a href="#124-plugin-drift-review" class="level-3">12.4 Plugin drift review</a><a href="#13-notification-system-design" class="level-2">13. Notification System Design</a><a href="#131-notification-triggers" class="level-3">13.1 Notification triggers</a><a href="#132-priority-model" class="level-3">13.2 Priority model</a><a href="#133-delivery-model" class="level-3">13.3 Delivery model</a><a href="#134-notification-centered-workflow" class="level-3">13.4 Notification-centered workflow</a><a href="#14-frontend-design-overview" class="level-2">14. Frontend Design Overview</a><a href="#15-desktop-tui-design" class="level-2">15. Desktop TUI Design</a><a href="#151-role" class="level-3">15.1 Role</a><a href="#152-primary-layout" class="level-3">15.2 Primary layout</a><a href="#153-core-session-view" class="level-3">15.3 Core session view</a><a href="#154-supporting-views" class="level-3">15.4 Supporting views</a><a href="#155-interaction-style" class="level-3">15.5 Interaction style</a><a href="#16-mobile-interface-design" class="level-2">16. Mobile Interface Design</a><a href="#161-role" class="level-3">16.1 Role</a><a href="#162-primary-mobile-surfaces" class="level-3">16.2 Primary mobile surfaces</a><a href="#163-navigation" class="level-3">16.3 Navigation</a><a href="#164-mobile-session-card-model" class="level-3">16.4 Mobile session card model</a><a href="#165-mobile-action-model" class="level-3">16.5 Mobile action model</a><a href="#17-frontend-information-architecture" class="level-2">17. Frontend Information Architecture</a><a href="#171-main-areas" class="level-3">17.1 Main areas</a><a href="#172-relationship-between-areas" class="level-3">17.2 Relationship between areas</a><a href="#18-visualized-core-design" class="level-2">18. Visualized Core Design</a><a href="#181-core-processing-diagram" class="level-3">18.1 Core processing diagram</a><a href="#182-attention-model" class="level-3">18.2 Attention model</a><a href="#183-control-loop" class="level-3">18.3 Control loop</a><a href="#19-visualized-frontend-designs" class="level-2">19. Visualized Frontend Designs</a><a href="#191-desktop-tui-overview" class="level-3">19.1 Desktop TUI overview</a><a href="#192-desktop-plugin-management" class="level-3">19.2 Desktop plugin management</a><a href="#193-desktop-permission-management" class="level-3">19.3 Desktop permission management</a><a href="#194-mobile-overview" class="level-3">19.4 Mobile overview</a><a href="#195-mobile-agent-detail" class="level-3">19.5 Mobile agent detail</a><a href="#20-operational-flows" class="level-2">20. Operational Flows</a><a href="#201-permission-response-flow" class="level-3">20.1 Permission-response flow</a><a href="#202-question-response-flow" class="level-3">20.2 Question-response flow</a><a href="#203-plugin-drift-review-flow" class="level-3">20.3 Plugin-drift review flow</a><a href="#204-permission-profile-maintenance-flow" class="level-3">20.4 Permission-profile maintenance flow</a><a href="#21-phased-delivery" class="level-2">21. Phased Delivery</a><a href="#phase-1-central-read-only-hub" class="level-3">Phase 1 — Central Read-Only Hub</a><a href="#phase-2-interactive-session-control" class="level-3">Phase 2 — Interactive Session Control</a><a href="#phase-3-permission-and-plugin-control-planes" class="level-3">Phase 3 — Permission and Plugin Control Planes</a><a href="#phase-4-structured-claude-data-integration" class="level-3">Phase 4 — Structured Claude Data Integration</a><a href="#22-risks-and-design-tensions" class="level-2">22. Risks and Design Tensions</a><a href="#221-tmux-parsing-fragility" class="level-3">22.1 Tmux parsing fragility</a><a href="#222-input-injection-ambiguity" class="level-3">22.2 Input injection ambiguity</a><a href="#223-permission-mode-truth" class="level-3">22.3 Permission-mode truth</a><a href="#224-plugin-state-ambiguity" class="level-3">22.4 Plugin-state ambiguity</a><a href="#225-mobile-surface-creep" class="level-3">22.5 Mobile surface creep</a><a href="#23-open-questions" class="level-2">23. Open Questions</a><a href="#24-recommended-design-direction" class="level-2">24. Recommended Design Direction</a><a href="#25-review-checklist" class="level-2">25. Review Checklist</a><a href="#26-appendix-short-positioning-statement" class="level-2">26. Appendix: Short Positioning Statement</a></nav>
+      </aside>
+
+      <main class="content">
+        <details class="mobile-toc">
+          <summary>Contents</summary>
+          <nav id="mobile-toc"><a href="#1-overview" class="level-2">1. Overview</a><a href="#2-product-vision" class="level-2">2. Product Vision</a><a href="#3-scope-and-non-goals" class="level-2">3. Scope and Non-Goals</a><a href="#in-scope" class="level-3">In scope</a><a href="#out-of-scope-for-the-current-design" class="level-3">Out of scope for the current design</a><a href="#deferred-but-expected-later" class="level-3">Deferred but expected later</a><a href="#4-core-design-principles" class="level-2">4. Core Design Principles</a><a href="#5-system-context" class="level-2">5. System Context</a><a href="#high-level-picture" class="level-3">High-level picture</a><a href="#conceptual-model" class="level-3">Conceptual model</a><a href="#6-core-architecture" class="level-2">6. Core Architecture</a><a href="#61-warren-core" class="level-3">6.1 Warren Core</a><a href="#62-remote-runtime-assumptions" class="level-3">6.2 Remote runtime assumptions</a><a href="#63-interface-surfaces" class="level-3">6.3 Interface surfaces</a><a href="#7-data-and-domain-model" class="level-2">7. Data and Domain Model</a><a href="#71-core-entities" class="level-3">7.1 Core entities</a><a href="#72-storage-direction" class="level-3">7.2 Storage direction</a><a href="#8-capture-and-parsing-pipeline" class="level-2">8. Capture and Parsing Pipeline</a><a href="#81-phase-1-capture-source" class="level-3">8.1 Phase-1 capture source</a><a href="#82-capture-pipeline" class="level-3">8.2 Capture pipeline</a><a href="#83-parser-outputs" class="level-3">8.3 Parser outputs</a><a href="#84-parser-strategy" class="level-3">8.4 Parser strategy</a><a href="#85-future-structured-source" class="level-3">8.5 Future structured source</a><a href="#9-agent-state-model" class="level-2">9. Agent State Model</a><a href="#91-canonical-states" class="level-3">9.1 Canonical states</a><a href="#92-state-priority" class="level-3">9.2 State priority</a><a href="#93-state-detection-approach" class="level-3">9.3 State detection approach</a><a href="#94-state-transitions" class="level-3">9.4 State transitions</a><a href="#10-interaction-model" class="level-2">10. Interaction Model</a><a href="#101-passive-operations" class="level-3">10.1 Passive operations</a><a href="#102-active-operations" class="level-3">10.2 Active operations</a><a href="#103-important-safety-principle" class="level-3">10.3 Important safety principle</a><a href="#11-permission-management-design" class="level-2">11. Permission Management Design</a><a href="#111-requirements" class="level-3">11.1 Requirements</a><a href="#112-permission-modes" class="level-3">11.2 Permission modes</a><a href="#113-desired-vs-observed-mode" class="level-3">11.3 Desired vs observed mode</a><a href="#114-permission-operations" class="level-3">11.4 Permission operations</a><a href="#115-open-implementation-caution" class="level-3">11.5 Open implementation caution</a><a href="#12-plugin-management-design" class="level-2">12. Plugin Management Design</a><a href="#121-requirements" class="level-3">12.1 Requirements</a><a href="#122-core-distinction" class="level-3">12.2 Core distinction</a><a href="#123-operational-value" class="level-3">12.3 Operational value</a><a href="#124-plugin-drift-review" class="level-3">12.4 Plugin drift review</a><a href="#13-notification-system-design" class="level-2">13. Notification System Design</a><a href="#131-notification-triggers" class="level-3">13.1 Notification triggers</a><a href="#132-priority-model" class="level-3">13.2 Priority model</a><a href="#133-delivery-model" class="level-3">13.3 Delivery model</a><a href="#134-notification-centered-workflow" class="level-3">13.4 Notification-centered workflow</a><a href="#14-frontend-design-overview" class="level-2">14. Frontend Design Overview</a><a href="#15-desktop-tui-design" class="level-2">15. Desktop TUI Design</a><a href="#151-role" class="level-3">15.1 Role</a><a href="#152-primary-layout" class="level-3">15.2 Primary layout</a><a href="#153-core-session-view" class="level-3">15.3 Core session view</a><a href="#154-supporting-views" class="level-3">15.4 Supporting views</a><a href="#155-interaction-style" class="level-3">15.5 Interaction style</a><a href="#16-mobile-interface-design" class="level-2">16. Mobile Interface Design</a><a href="#161-role" class="level-3">16.1 Role</a><a href="#162-primary-mobile-surfaces" class="level-3">16.2 Primary mobile surfaces</a><a href="#163-navigation" class="level-3">16.3 Navigation</a><a href="#164-mobile-session-card-model" class="level-3">16.4 Mobile session card model</a><a href="#165-mobile-action-model" class="level-3">16.5 Mobile action model</a><a href="#17-frontend-information-architecture" class="level-2">17. Frontend Information Architecture</a><a href="#171-main-areas" class="level-3">17.1 Main areas</a><a href="#172-relationship-between-areas" class="level-3">17.2 Relationship between areas</a><a href="#18-visualized-core-design" class="level-2">18. Visualized Core Design</a><a href="#181-core-processing-diagram" class="level-3">18.1 Core processing diagram</a><a href="#182-attention-model" class="level-3">18.2 Attention model</a><a href="#183-control-loop" class="level-3">18.3 Control loop</a><a href="#19-visualized-frontend-designs" class="level-2">19. Visualized Frontend Designs</a><a href="#191-desktop-tui-overview" class="level-3">19.1 Desktop TUI overview</a><a href="#192-desktop-plugin-management" class="level-3">19.2 Desktop plugin management</a><a href="#193-desktop-permission-management" class="level-3">19.3 Desktop permission management</a><a href="#194-mobile-overview" class="level-3">19.4 Mobile overview</a><a href="#195-mobile-agent-detail" class="level-3">19.5 Mobile agent detail</a><a href="#20-operational-flows" class="level-2">20. Operational Flows</a><a href="#201-permission-response-flow" class="level-3">20.1 Permission-response flow</a><a href="#202-question-response-flow" class="level-3">20.2 Question-response flow</a><a href="#203-plugin-drift-review-flow" class="level-3">20.3 Plugin-drift review flow</a><a href="#204-permission-profile-maintenance-flow" class="level-3">20.4 Permission-profile maintenance flow</a><a href="#21-phased-delivery" class="level-2">21. Phased Delivery</a><a href="#phase-1-central-read-only-hub" class="level-3">Phase 1 — Central Read-Only Hub</a><a href="#phase-2-interactive-session-control" class="level-3">Phase 2 — Interactive Session Control</a><a href="#phase-3-permission-and-plugin-control-planes" class="level-3">Phase 3 — Permission and Plugin Control Planes</a><a href="#phase-4-structured-claude-data-integration" class="level-3">Phase 4 — Structured Claude Data Integration</a><a href="#22-risks-and-design-tensions" class="level-2">22. Risks and Design Tensions</a><a href="#221-tmux-parsing-fragility" class="level-3">22.1 Tmux parsing fragility</a><a href="#222-input-injection-ambiguity" class="level-3">22.2 Input injection ambiguity</a><a href="#223-permission-mode-truth" class="level-3">22.3 Permission-mode truth</a><a href="#224-plugin-state-ambiguity" class="level-3">22.4 Plugin-state ambiguity</a><a href="#225-mobile-surface-creep" class="level-3">22.5 Mobile surface creep</a><a href="#23-open-questions" class="level-2">23. Open Questions</a><a href="#24-recommended-design-direction" class="level-2">24. Recommended Design Direction</a><a href="#25-review-checklist" class="level-2">25. Review Checklist</a><a href="#26-appendix-short-positioning-statement" class="level-2">26. Appendix: Short Positioning Statement</a></nav>
+        </details>
+
+        <header class="hero">
+          <div class="hero-top">
+            <span class="pill">Aggregate review packet</span>
+            <span class="pill">Markdown-faithful rendering</span>
+            <span class="pill">Human inspection</span>
+          </div>
+          <h1>Warren Design Review</h1>
+          <p>
+            A consolidated review page for the Warren concept: a central hub for supervising distributed Claude Code sessions inside remote tmux environments, with dedicated session, notification, plugin, and permission management surfaces.
+          </p>
+        </header>
+
+        <article id="rendered"><h1 id="warren-aggregate-design-review" style="display:none;">Warren — Aggregate Design Review</h1><section class="section-card"><h2 id="1-overview">1. Overview</h2><p>Warren is a central hub for supervising and interacting with distributed coding-agent sessions that run inside tmux across multiple remote servers.</p><p>The immediate problem is not deployment or orchestration in the abstract. The real problem is that a single working environment now spans many remote machines, many long-lived agent sessions, many plugin configurations, and many permission states. Today that workspace is fragmented across SSH logins and tmux windows. Warren pulls it back into one coherent control surface.</p><p>At its core, Warren does four things:</p><ol><li>tracks where agent sessions live,</li><li>captures what those sessions are doing,</li><li>classifies when they need user attention,</li><li>lets the user act on them from a central hub.</li></ol><p>The design is intentionally layered. The foundation is a local core that knows about servers, sessions, capture, and control. On top of that sit dedicated user interfaces: a desktop TUI for full control and a mobile interface for on-the-go supervision and intervention.</p><p>This document combines the previously explored ideas into one review packet: product framing, architecture, interaction model, frontend design, state detection, plugin and permission management, phased delivery, diagrams, and open questions.</p><hr></section><section class="section-card"><h2 id="2-product-vision">2. Product Vision</h2><p>Warren should feel like mission control for a distributed coding workspace.</p><p>Instead of remembering which server hosts which agent, SSHing into the right machine, attaching the right tmux session, and reading terminal output one session at a time, the user should be able to open Warren and immediately answer:</p><ul><li>What agents are running right now?</li><li>What is each one working on?</li><li>Which files is each agent touching?</li><li>Which agent is blocked, idle, finished, or asking for help?</li><li>Which plugin or permission setup differs between servers?</li><li>Where do I need to intervene right now?</li></ul><p>Warren is not primarily a replacement for tmux or SSH. It is a control layer over them.</p><p>It should also not pretend to be a generic cluster manager. The center of gravity is Claude Code-style agent sessions: chat-oriented, tool-using, permission-gated, plugin-extended coding sessions that happen to live inside remote tmux panes.</p><hr></section><section class="section-card"><h2 id="3-scope-and-non-goals">3. Scope and Non-Goals</h2><h3 id="in-scope">In scope</h3><ul><li>Central registry of remote servers and agent sessions</li><li>Tmux-backed session discovery and management</li><li>Capture of visible and recent session content from tmux panes</li><li>Parsing captured content into chat/activity/file/state summaries</li><li>Detection of actionable states such as waiting for permission, asking a question, or finished</li><li>Central interaction with sessions by sending input back into tmux</li><li>Central management of plugin inventory, enable/disable state, and version drift</li><li>Central management of per-session permission mode and related rules</li><li>Dedicated desktop TUI and mobile-facing frontend surfaces</li><li>A notification system driven by agent-state transitions</li></ul><h3 id="out-of-scope-for-the-current-design">Out of scope for the current design</h3><ul><li>Full autonomous orchestration of multi-agent workflows</li><li>General-purpose deployment pipeline management</li><li>Replacing existing monitoring stacks like Prometheus or Grafana</li><li>Multi-user collaboration and RBAC-heavy enterprise sharing</li><li>Deep structured extraction from <code>~/.claude</code> as a first implementation step</li></ul><h3 id="deferred-but-expected-later">Deferred but expected later</h3><ul><li>Reading and indexing session history from <code>~/.claude</code></li><li>Rich file diff review tied to actual pending edits</li><li>Better session replay and timeline views</li><li>More explicit coordination primitives across agents</li></ul><hr></section><section class="section-card"><h2 id="4-core-design-principles">4. Core Design Principles</h2><ol><li><strong>Centralize attention, not execution.</strong> Agents still run remotely, inside tmux, on the machines where they belong. Warren centralizes visibility and control.</li><li><strong>Use tmux as the first source of truth.</strong> The first usable version should work by capturing panes and sending keys, because that matches the real runtime environment.</li><li><strong>Separate core from interfaces.</strong> Session capture/control logic must not be tangled with terminal or mobile UI code.</li><li><strong>Design for intervention.</strong> The most important states are the ones where the user must act: permission prompts, questions, completion, and errors.</li><li><strong>Treat plugins and permissions as first-class operational state.</strong> They are part of the workspace topology, not secondary settings.</li><li><strong>Make drift visible.</strong> Version mismatches, plugin-state differences, and permission-mode inconsistencies across servers should be easy to spot.</li><li><strong>Stay reviewable by humans.</strong> The product must make it easy to inspect what the agent saw, what it did, what file it touched, and why Warren believes the agent is in a given state.</li></ol><hr></section><section class="section-card"><h2 id="5-system-context">5. System Context</h2><h3 id="high-level-picture">High-level picture</h3><figure class="code-figure"><div class="code-meta">text</div><pre><code>┌─────────────────────────────────────────────────────────────┐
+│                        Warren Frontends                     │
+│                                                             │
+│   Desktop TUI                    Mobile App / Mobile Web    │
+│   - multi-pane                   - touch-first              │
+│   - keyboard-first               - alerts and quick action  │
+│   - operator console             - compact intervention     │
+└───────────────────────────────┬─────────────────────────────┘
+                                │
+                    commands / queries / events
+                                │
+┌───────────────────────────────▼─────────────────────────────┐
+│                         Warren Core                          │
+│                                                             │
+│  - server registry                                          │
+│  - agent registry                                           │
+│  - SSH transport / pooling                                  │
+│  - tmux capture + send-keys                                 │
+│  - activity parsing                                          │
+│  - state detection                                           │
+│  - permission configuration                                  │
+│  - plugin inventory + config                                 │
+│  - notification engine                                       │
+└───────────────────────────────┬─────────────────────────────┘
+                                │
+                                │ SSH
+                                │
+        ┌───────────────────────┼────────────────────────┐
+        │                       │                        │
+┌───────▼───────┐      ┌────────▼────────┐      ┌───────▼───────┐
+│   server-a    │      │    server-b     │      │   server-c    │
+│               │      │                  │      │               │
+│ tmux session  │      │ tmux session     │      │ tmux session  │
+│ Claude Code   │      │ Claude Code      │      │ Claude Code   │
+│ plugins       │      │ plugins          │      │ plugins       │
+│ ~/.claude     │      │ ~/.claude        │      │ ~/.claude     │
+└───────────────┘      └──────────────────┘      └───────────────┘</code></pre></figure><h3 id="conceptual-model">Conceptual model</h3><ul><li>A <strong>server</strong> is a remote machine Warren can reach over SSH.</li><li>A <strong>session</strong> is a tmux session that hosts a coding agent.</li><li>An <strong>agent</strong> is Warren’s logical model of that session plus its metadata, state, and controls.</li><li>A <strong>capture</strong> is a recent pane snapshot taken from tmux.</li><li>An <strong>activity summary</strong> is a parsed view over one or more captures.</li><li>A <strong>permission profile</strong> is the configuration Warren associates with the session’s tool-approval behavior.</li><li>A <strong>plugin profile</strong> is the observed and desired plugin state for a server or session.</li></ul><hr></section><section class="section-card"><h2 id="6-core-architecture">6. Core Architecture</h2><h3 id="61-warren-core">6.1 Warren Core</h3><p>Warren Core is the stable center of the system. It is not a UI. It is a library plus local command surface responsible for remote session supervision.</p><p>Its responsibilities are:</p><ul><li>store server definitions,</li><li>store known agent/session mappings,</li><li>connect to remote servers,</li><li>discover or target tmux sessions,</li><li>capture pane content,</li><li>parse captured content,</li><li>detect session state,</li><li>send input back into sessions,</li><li>manage permission settings,</li><li>manage plugin inventory and configuration,</li><li>emit events for notifications and UI updates.</li></ul><h3 id="62-remote-runtime-assumptions">6.2 Remote runtime assumptions</h3><p>The first design assumes:</p><ul><li>the coding agent already runs inside tmux on a remote server,</li><li>Warren can SSH to that server,</li><li>Warren can run tmux commands there,</li><li>Warren can read relevant Claude Code config/plugin directories,</li><li>Warren may later read <code>~/.claude</code> session artifacts directly.</li></ul><h3 id="63-interface-surfaces">6.3 Interface surfaces</h3><p>Warren Core supports two frontends:</p><ul><li><strong>Desktop TUI</strong> as the full operator interface.</li><li><strong>Mobile interface</strong> as a compact control and intervention surface.</li></ul><p>The frontends should consume the same model: agent list, agent details, state, recent activity, permissions, plugins, alerts, and actions.</p><hr></section><section class="section-card"><h2 id="7-data-and-domain-model">7. Data and Domain Model</h2><h3 id="71-core-entities">7.1 Core entities</h3><figure class="code-figure"><div class="code-meta">text</div><pre><code>Server
+- name
+- host
+- user
+- port
+- ssh options
+- tags
+
+AgentSession
+- logical name
+- server reference
+- tmux session name
+- session type
+- created_at
+- last_seen_at
+- capture policy
+
+AgentActivity
+- timestamp
+- raw tmux snapshot
+- parsed chat excerpts
+- parsed file interactions
+- parsed tool activity
+- pending prompt state
+- inferred agent state
+
+PermissionProfile
+- mode
+- tool rules
+- path rules
+- inheritance/default source
+
+PluginInventory
+- installed plugins per server
+- enabled/disabled state
+- version
+- components exposed
+- config overrides
+
+Notification
+- type
+- source agent
+- timestamp
+- severity
+- action affordances
+- read/unread</code></pre></figure><h3 id="72-storage-direction">7.2 Storage direction</h3><p>The current design points toward simple local state for Warren itself, with remote truth fetched from servers.</p><p>Likely local storage areas:</p><ul><li><code>~/.warren/config.yaml</code></li><li><code>~/.warren/servers.yaml</code></li><li><code>~/.warren/registry.json</code></li><li><code>~/.warren/plugins.json</code></li><li><code>~/.warren/notifications.json</code></li><li><code>~/.warren/cache/</code> for recent captures and parsed activity</li></ul><p>The design should preserve a clear distinction between:</p><ul><li><strong>observed state</strong> from remote servers,</li><li><strong>desired state</strong> configured in Warren,</li><li><strong>derived state</strong> such as inferred agent status or attention priority.</li></ul><hr></section><section class="section-card"><h2 id="8-capture-and-parsing-pipeline">8. Capture and Parsing Pipeline</h2><h3 id="81-phase-1-capture-source">8.1 Phase-1 capture source</h3><p>The first operational source is tmux itself.</p><p>Warren captures recent pane content using tmux pane capture on the remote server. The capture window should include:</p><ul><li>currently visible pane content,</li><li>recent scrollback,</li><li>enough lines to reconstruct recent chat and tool activity,</li><li>optionally ANSI escapes if the parser benefits from them.</li></ul><h3 id="82-capture-pipeline">8.2 Capture pipeline</h3><figure class="code-figure"><div class="code-meta">text</div><pre><code>remote tmux pane
+    ↓
+SSH command execution
+    ↓
+raw pane snapshot
+    ↓
+normalization
+    ↓
+parser stages
+    ├─ chat extraction
+    ├─ file interaction extraction
+    ├─ tool activity extraction
+    ├─ permission/question detection
+    └─ state inference
+    ↓
+agent activity model
+    ↓
+frontend views + notifications</code></pre></figure><h3 id="83-parser-outputs">8.3 Parser outputs</h3><p>The parser should attempt to extract at least:</p><ul><li>recent user messages,</li><li>recent agent responses,</li><li>files read, written, edited, or referenced,</li><li>commands executed,</li><li>pending permission prompts,</li><li>pending user-choice questions,</li><li>finish/error markers,</li><li>recency of visible activity.</li></ul><h3 id="84-parser-strategy">8.4 Parser strategy</h3><p>The parser will initially be heuristic. It should be explicitly designed as a pipeline with confidence levels rather than one giant regex block.</p><p>Recommended parser stages:</p><ol><li>normalize terminal content,</li><li>split visible transcript into message/tool/prompt segments,</li><li>extract structured hints such as paths and tool names,</li><li>infer current state from recent segments,</li><li>attach confidence and fall back to raw display when uncertain.</li></ol><h3 id="85-future-structured-source">8.5 Future structured source</h3><p>Later, Warren should support structured session/history ingestion from <code>~/.claude</code>.</p><p>That future path matters because tmux capture is enough to build the hub, but it is not enough to guarantee perfect reconstruction of full session history, tool metadata, or proposed diffs. The design should therefore keep capture/parsing behind a replaceable interface.</p><hr></section><section class="section-card"><h2 id="9-agent-state-model">9. Agent State Model</h2><p>Warren needs a first-class model of session state because the UI and notification system revolve around it.</p><h3 id="91-canonical-states">9.1 Canonical states</h3><figure class="code-figure"><div class="code-meta">text</div><pre><code>idle
+thinking
+executing
+waiting_permission
+asking_question
+finished
+error
+unknown</code></pre></figure><h3 id="92-state-priority">9.2 State priority</h3><p>When multiple signals are present, Warren should classify according to user-action priority.</p><p>Recommended precedence:</p><ol><li><code>waiting_permission</code></li><li><code>asking_question</code></li><li><code>error</code></li><li><code>finished</code></li><li><code>executing</code></li><li><code>thinking</code></li><li><code>idle</code></li><li><code>unknown</code></li></ol><p>This ensures the hub surfaces the items most likely to need intervention.</p><h3 id="93-state-detection-approach">9.3 State detection approach</h3><p>State detection is driven by recent-capture analysis. Signals include:</p><ul><li>visible permission prompts,</li><li>choice/question prompts,</li><li>error strings or obvious failure output,</li><li>explicit completion language,</li><li>tool activity or command execution,</li><li>spinner/progress activity,</li><li>empty prompt plus inactivity.</li></ul><h3 id="94-state-transitions">9.4 State transitions</h3><p>State changes should be tracked as events, not just overwrites. This enables:</p><ul><li>notification emission,</li><li>activity timelines,</li><li>debugging of parser behavior,</li><li>“what changed” views for operators.</li></ul><hr></section><section class="section-card"><h2 id="10-interaction-model">10. Interaction Model</h2><p>The central promise of Warren is not just seeing sessions but acting on them without attaching to tmux directly.</p><h3 id="101-passive-operations">10.1 Passive operations</h3><ul><li>see current status,</li><li>inspect recent chat,</li><li>inspect recent file interactions,</li><li>inspect recent commands/tool use,</li><li>inspect plugin state,</li><li>inspect permission mode,</li><li>inspect drift across servers.</li></ul><h3 id="102-active-operations">10.2 Active operations</h3><ul><li>send a message into a session,</li><li>answer a question from a session,</li><li>approve or deny a permission prompt,</li><li>request a file view from the remote workspace,</li><li>open a session directly when full raw interaction is needed,</li><li>change permission mode for a session,</li><li>enable/disable/configure plugins.</li></ul><h3 id="103-important-safety-principle">10.3 Important safety principle</h3><p>Warren should not fake certainty when interacting with a live terminal session. Sending input into tmux is powerful but blunt. The design should make it obvious:</p><ul><li>what prompt Warren believes is active,</li><li>what response will be sent,</li><li>whether the response is safe to send,</li><li>whether the captured session changed before the action was applied.</li></ul><p>A simple model is: capture → validate prompt still matches → send input → recapture → confirm state transition.</p><hr></section><section class="section-card"><h2 id="11-permission-management-design">11. Permission Management Design</h2><p>Permission mode is operational state and needs a dedicated control surface.</p><h3 id="111-requirements">11.1 Requirements</h3><p>Warren should know, per session:</p><ul><li>current permission mode,</li><li>whether observed behavior matches configured mode,</li><li>tool-level allow/prompt/deny posture,</li><li>path-based exceptions,</li><li>whether a prompt is currently blocking the agent.</li></ul><h3 id="112-permission-modes">11.2 Permission modes</h3><p>The design assumes Claude Code-style permission modes such as:</p><ul><li>auto,</li><li>default,</li><li>plan,</li><li>acceptEdits,</li><li>dontAsk,</li><li>bypassPermissions.</li></ul><h3 id="113-desired-vs-observed-mode">11.3 Desired vs observed mode</h3><p>This should be explicit in the UI.</p><p>Example:</p><ul><li>desired mode: <code>default</code></li><li>observed mode: <code>auto</code></li><li>drift: yes</li><li>action: reapply / inspect / restart with config</li></ul><h3 id="114-permission-operations">11.4 Permission operations</h3><p>Warren should support:</p><ul><li>changing mode for one session,</li><li>applying a default profile to multiple sessions,</li><li>managing allow/prompt/deny tool rules,</li><li>managing path-specific rules,</li><li>handling live prompts from the hub.</li></ul><h3 id="115-open-implementation-caution">11.5 Open implementation caution</h3><p>Changing permission mode at runtime may not be uniformly supported. The design should therefore allow multiple application strategies:</p><ul><li>restart session with new mode,</li><li>mutate remote Claude Code settings,</li><li>invoke an in-session config command if supported.</li></ul><p>The product should show which strategy it used.</p><hr></section><section class="section-card"><h2 id="12-plugin-management-design">12. Plugin Management Design</h2><p>Plugins are part of the operational surface because different servers may have different plugin sets, versions, and enablement state.</p><h3 id="121-requirements">12.1 Requirements</h3><p>Warren should support:</p><ul><li>plugin discovery on each server,</li><li>per-server inventory,</li><li>per-agent enable/disable status,</li><li>plugin version comparison across servers,</li><li>plugin configuration editing,</li><li>plugin sync and update workflows,</li><li>dependency/conflict inspection.</li></ul><h3 id="122-core-distinction">12.2 Core distinction</h3><p>There are at least three useful scopes:</p><ul><li><strong>installed on server</strong>,</li><li><strong>enabled for session/agent</strong>,</li><li><strong>configured with overrides at server or agent scope</strong>.</li></ul><p>The UI should never collapse these into one ambiguous boolean.</p><h3 id="123-operational-value">12.3 Operational value</h3><p>This matters because a session’s capabilities may differ for reasons that are otherwise hard to remember:</p><ul><li>server-a has a newer review plugin,</li><li>server-b disabled a deployment plugin,</li><li>gpu-box has ML-specific plugins unavailable elsewhere,</li><li>an agent is blocked because the needed plugin is disabled.</li></ul><h3 id="124-plugin-drift-review">12.4 Plugin drift review</h3><p>The plugin surface should be designed partly as a drift-inspection tool:</p><ul><li>which plugins differ,</li><li>which versions are behind,</li><li>which sessions run with non-default config,</li><li>which servers are inconsistent against a chosen baseline.</li></ul><hr></section><section class="section-card"><h2 id="13-notification-system-design">13. Notification System Design</h2><p>Notifications are not a generic convenience feature. They are the frontend expression of state detection.</p><h3 id="131-notification-triggers">13.1 Notification triggers</h3><p>At minimum:</p><ul><li>permission required,</li><li>agent asked a question,</li><li>agent finished,</li><li>agent hit an error,</li><li>agent stopped unexpectedly,</li><li>plugin update/drift detected.</li></ul><h3 id="132-priority-model">13.2 Priority model</h3><p>Recommended priority:</p><ul><li>high: permission required, asking question, error,</li><li>medium: finished, stopped,</li><li>low: idle, startup, version drift.</li></ul><h3 id="133-delivery-model">13.3 Delivery model</h3><p>Desktop TUI:</p><ul><li>in-app attention list,</li><li>badges,</li><li>optionally system notifications.</li></ul><p>Mobile:</p><ul><li>in-app inbox,</li><li>push notifications for high/medium priority,</li><li>direct action affordances where safe.</li></ul><h3 id="134-notification-centered-workflow">13.4 Notification-centered workflow</h3><p>A key usage pattern is that a user enters Warren because something needs attention, not because they want to browse. So the notification system should link directly into the relevant session view and action surface.</p><hr></section><section class="section-card"><h2 id="14-frontend-design-overview">14. Frontend Design Overview</h2><p>The frontend is not one screen. It is a set of specialized views around four domains:</p><ol><li>session management,</li><li>notifications,</li><li>plugin management,</li><li>permission management.</li></ol><p>The desktop TUI is the primary heavy-duty console. The mobile UI is the compact supervisory/control companion.</p><hr></section><section class="section-card"><h2 id="15-desktop-tui-design">15. Desktop TUI Design</h2><h3 id="151-role">15.1 Role</h3><p>The desktop TUI is the main operator console. It should support:</p><ul><li>scanning the whole workspace,</li><li>drilling into one agent,</li><li>resolving prompts quickly,</li><li>comparing plugin/permission state,</li><li>doing bulk administrative actions.</li></ul><h3 id="152-primary-layout">15.2 Primary layout</h3><p>Recommended shape:</p><ul><li>left pane: agent list / filters,</li><li>main pane: selected agent detail,</li><li>lower or side surfaces: notifications, activity, or detail tabs,</li><li>top-level navigation tabs: Sessions / Plugins / Permissions / Settings.</li></ul><h3 id="153-core-session-view">15.3 Core session view</h3><figure class="code-figure"><div class="code-meta">text</div><pre><code>┌─ Warren - Sessions ────────────────────────────────────────────────┐
+│  Agents                           Selected Session                │
+│  ┌──────────────────────┐        ┌─────────────────────────────┐ │
+│  │ backend-api   ⚠      │        │ backend-api @ prod-1       │ │
+│  │ ml-trainer    ●      │        │ state: waiting_permission  │ │
+│  │ frontend      ?      │        │ mode: default              │ │
+│  │ worker-3      ✓      │        │                             │ │
+│  │ scraper       ✗      │        │ recent chat                │ │
+│  └──────────────────────┘        │ files touched              │ │
+│                                  │ prompt awaiting answer     │ │
+│                                  │ [Approve] [Deny] [Reply]   │ │
+│                                  └─────────────────────────────┘ │
+└───────────────────────────────────────────────────────────────────┘</code></pre></figure><h3 id="154-supporting-views">15.4 Supporting views</h3><ul><li>session overview grid,</li><li>agent focus view,</li><li>file viewer,</li><li>plugin browser,</li><li>permission profile editor,</li><li>notification center.</li></ul><h3 id="155-interaction-style">15.5 Interaction style</h3><p>Keyboard-first with predictable shortcuts:</p><ul><li>navigate lists,</li><li>focus panels,</li><li>approve/deny quickly,</li><li>jump to notifications,</li><li>filter by state/server/tag,</li><li>open direct session attach when needed.</li></ul><hr></section><section class="section-card"><h2 id="16-mobile-interface-design">16. Mobile Interface Design</h2><h3 id="161-role">16.1 Role</h3><p>The mobile interface is not a reduced copy of the TUI. It is an interruption-handling tool.</p><p>Its primary jobs are:</p><ul><li>tell the user what needs attention,</li><li>let the user inspect the minimum useful context,</li><li>let the user approve/deny/reply quickly,</li><li>let the user check progress while away from a full machine.</li></ul><h3 id="162-primary-mobile-surfaces">16.2 Primary mobile surfaces</h3><ul><li>session home list,</li><li>agent detail,</li><li>notification inbox,</li><li>plugins list/detail,</li><li>permissions list/detail.</li></ul><h3 id="163-navigation">16.3 Navigation</h3><p>Single-pane navigation with bottom tabs or a compact menu. The most important entry point is notifications.</p><h3 id="164-mobile-session-card-model">16.4 Mobile session card model</h3><p>Each agent row should include:</p><ul><li>name,</li><li>server,</li><li>state icon,</li><li>last activity age,</li><li>one-line summary,</li><li>one-tap access to the relevant action.</li></ul><p>Example:</p><figure class="code-figure"><div class="code-meta">text</div><pre><code>● backend-api
+prod-1 • 2m ago
+Needs permission: edit src/auth.py
+[View]</code></pre></figure><h3 id="165-mobile-action-model">16.5 Mobile action model</h3><p>Mobile should prioritize short, safe actions:</p><ul><li>approve,</li><li>deny,</li><li>reply,</li><li>inspect recent context,</li><li>change mode,</li><li>mute notifications,</li><li>restart or stop only if those controls are explicitly intended.</li></ul><hr></section><section class="section-card"><h2 id="17-frontend-information-architecture">17. Frontend Information Architecture</h2><h3 id="171-main-areas">17.1 Main areas</h3><figure class="code-figure"><div class="code-meta">text</div><pre><code>Warren Frontend
+├── Sessions
+│   ├── All agents
+│   ├── Agent detail
+│   ├── Chat/activity summary
+│   ├── File interactions
+│   └── Inline intervention controls
+├── Notifications
+│   ├── Inbox
+│   ├── Per-type settings
+│   └── Quick jump to source agent
+├── Plugins
+│   ├── Server inventory
+│   ├── Agent enablement state
+│   ├── Version drift
+│   └── Config editor
+├── Permissions
+│   ├── Session mode list
+│   ├── Tool rules
+│   ├── Path rules
+│   └── Bulk apply
+└── Settings
+    ├── Servers
+    ├── Capture behavior
+    ├── Notification defaults
+    └── UI preferences</code></pre></figure><h3 id="172-relationship-between-areas">17.2 Relationship between areas</h3><ul><li><strong>Sessions</strong> are where work is observed.</li><li><strong>Notifications</strong> are where attention is summoned.</li><li><strong>Permissions</strong> are where intervention policy is shaped.</li><li><strong>Plugins</strong> are where capability drift is managed.</li></ul><p>These should remain distinct in the UI even if they share backing state.</p><hr></section><section class="section-card"><h2 id="18-visualized-core-design">18. Visualized Core Design</h2><h3 id="181-core-processing-diagram">18.1 Core processing diagram</h3><figure class="code-figure"><div class="code-meta">text</div><pre><code>                remote server
+                     │
+                     │ SSH
+                     ▼
+             tmux capture-pane
+                     │
+                     ▼
+              raw terminal snapshot
+                     │
+          ┌──────────┼──────────┐
+          │          │          │
+          ▼          ▼          ▼
+      chat parse  file parse  prompt parse
+          │          │          │
+          └──────┬───┴──────┬───┘
+                 ▼          ▼
+              activity   state inference
+                 │          │
+                 └────┬─────┘
+                      ▼
+               agent activity model
+                      │
+      ┌───────────────┼────────────────┐
+      ▼               ▼                ▼
+  session UI     notifications    intervention actions</code></pre></figure><h3 id="182-attention-model">18.2 Attention model</h3><figure class="code-figure"><div class="code-meta">text</div><pre><code>observed session content
+        ↓
+state detector
+        ↓
+Does user need to act?
+        ├─ no  → update status only
+        └─ yes → create notification + expose action controls</code></pre></figure><h3 id="183-control-loop">18.3 Control loop</h3><figure class="code-figure"><div class="code-meta">text</div><pre><code>capture current prompt
+     ↓
+parse and identify state
+     ↓
+user chooses action
+     ↓
+validate prompt still current
+     ↓
+send keys into tmux session
+     ↓
+recapture session
+     ↓
+confirm state transition / report ambiguity</code></pre></figure><hr></section><section class="section-card"><h2 id="19-visualized-frontend-designs">19. Visualized Frontend Designs</h2><h3 id="191-desktop-tui-overview">19.1 Desktop TUI overview</h3><figure class="code-figure"><div class="code-meta">text</div><pre><code>┌──────────────────────────────── Warren ────────────────────────────────┐
+│ [Sessions] [Plugins] [Permissions] [Notifications] [Settings]         │
+├───────────────────────┬────────────────────────────────────────────────┤
+│ Agent List            │ Detail Pane                                    │
+│                       │                                                │
+│ ⚠ backend-api         │ backend-api @ prod-1                          │
+│ ● ml-trainer          │ mode: default                                 │
+│ ? frontend            │ state: waiting_permission                     │
+│ ✓ worker-3            │                                                │
+│ ✗ scraper             │ recent chat                                   │
+│                       │ files touched                                 │
+│ Filters               │ pending prompt                                │
+│ - by server           │ [Approve] [Deny] [Reply] [Open File]          │
+│ - by state            │                                                │
+│ - by tag              │                                                │
+├───────────────────────┴────────────────────────────────────────────────┤
+│ Notification strip: backend-api needs permission • frontend asked Q    │
+└────────────────────────────────────────────────────────────────────────┘</code></pre></figure><h3 id="192-desktop-plugin-management">19.2 Desktop plugin management</h3><figure class="code-figure"><div class="code-meta">text</div><pre><code>┌──────────────────────────── Plugins ───────────────────────────────────┐
+│ Server tree                 Selected plugin                             │
+│                             code-review                                 │
+│ prod-1                      version drift: prod-2 behind                │
+│   ✓ code-review             enabled on: backend-api, frontend           │
+│   ✓ deployment              disabled on: scraper                        │
+│   ✗ testing-utils           actions: [Enable] [Disable] [Update]        │
+│                             config scopes: global/server/agent          │
+└─────────────────────────────────────────────────────────────────────────┘</code></pre></figure><h3 id="193-desktop-permission-management">19.3 Desktop permission management</h3><figure class="code-figure"><div class="code-meta">text</div><pre><code>┌────────────────────────── Permissions ──────────────────────────────────┐
+│ Agent list                  Selected profile                            │
+│ backend-api  default        mode: default                               │
+│ ml-trainer   auto           tool rules                                  │
+│ frontend     plan           - Read: allow                               │
+│                             - Edit: prompt                              │
+│                             - Bash: deny                                │
+│                             path rules                                  │
+│                             - src/**/*.py allow edit                    │
+│                             - .env* deny all                            │
+│                             [Save] [Apply to many]                      │
+└─────────────────────────────────────────────────────────────────────────┘</code></pre></figure><h3 id="194-mobile-overview">19.4 Mobile overview</h3><figure class="code-figure"><div class="code-meta">text</div><pre><code>┌─────────────────────────────┐
+│ Warren                🔔 3  │
+├─────────────────────────────┤
+│ ⚠ backend-api              │
+│ prod-1 • needs permission  │
+│ [View] [Approve]           │
+│                             │
+│ ? frontend                 │
+│ prod-2 • asked question    │
+│ [View] [Reply]             │
+│                             │
+│ ● ml-trainer               │
+│ gpu-box • executing        │
+│ [View]                     │
+├─────────────────────────────┤
+│ Sessions  Plugins  Perms    │
+└─────────────────────────────┘</code></pre></figure><h3 id="195-mobile-agent-detail">19.5 Mobile agent detail</h3><figure class="code-figure"><div class="code-meta">text</div><pre><code>┌─────────────────────────────┐
+│ ← backend-api               │
+├─────────────────────────────┤
+│ state: waiting_permission   │
+│ mode: default               │
+│                             │
+│ recent chat                 │
+│ - User: Fix auth bug        │
+│ - Agent: I found the issue  │
+│                             │
+│ file: src/auth.py           │
+│ action: pending edit        │
+│                             │
+│ [View File]                 │
+│ [Approve] [Deny]            │
+│ [Reply]                     │
+└─────────────────────────────┘</code></pre></figure><hr></section><section class="section-card"><h2 id="20-operational-flows">20. Operational Flows</h2><h3 id="201-permission-response-flow">20.1 Permission-response flow</h3><ol><li>Warren captures session output.</li><li>Parser detects a permission prompt.</li><li>Agent state becomes <code>waiting_permission</code>.</li><li>Notification is emitted.</li><li>User opens agent detail from notification.</li><li>Warren shows recent chat and referenced file context.</li><li>User approves or denies.</li><li>Warren validates prompt freshness and sends response.</li><li>Warren recaptures and verifies the session progressed.</li></ol><h3 id="202-question-response-flow">20.2 Question-response flow</h3><ol><li>Agent asks a design or implementation question.</li><li>Parser marks state as <code>asking_question</code>.</li><li>Notification is emitted.</li><li>User opens context.</li><li>User chooses a quick option or sends a reply.</li><li>Warren injects the response into tmux.</li><li>Warren confirms the session resumed work.</li></ol><h3 id="203-plugin-drift-review-flow">20.3 Plugin-drift review flow</h3><ol><li>Warren scans plugins across servers.</li><li>Version/state differences are recorded.</li><li>Plugin dashboard highlights mismatches.</li><li>User inspects one plugin.</li><li>User updates, syncs, or changes enablement scope.</li><li>Warren applies the action and records new observed state.</li></ol><h3 id="204-permission-profile-maintenance-flow">20.4 Permission-profile maintenance flow</h3><ol><li>User inspects a session repeatedly asking for the same class of action.</li><li>User opens permission management.</li><li>User edits the session’s permission profile or applies a broader profile.</li><li>Warren applies via restart, remote settings mutation, or in-session config.</li><li>Warren marks whether observed mode now matches desired mode.</li></ol><hr></section><section class="section-card"><h2 id="21-phased-delivery">21. Phased Delivery</h2><h3 id="phase-1-central-read-only-hub">Phase 1 — Central Read-Only Hub</h3><p>Goal: make the distributed workspace visible from one place.</p><p>Includes:</p><ul><li>server/session registry,</li><li>tmux capture,</li><li>activity parsing,</li><li>state detection,</li><li>session overview UI,</li><li>agent detail UI,</li><li>basic notification center,</li><li>file-interaction summaries.</li></ul><p>This phase succeeds if the user can open Warren and understand what each agent is doing and which ones need attention.</p><h3 id="phase-2-interactive-session-control">Phase 2 — Interactive Session Control</h3><p>Goal: act on sessions from the hub.</p><p>Includes:</p><ul><li>send messages into sessions,</li><li>answer questions,</li><li>approve/deny permission prompts,</li><li>open remote file viewer,</li><li>recapture/validate control loop,</li><li>tighter notification-to-action flow.</li></ul><p>This phase succeeds if the user rarely needs to attach directly to tmux for routine intervention.</p><h3 id="phase-3-permission-and-plugin-control-planes">Phase 3 — Permission and Plugin Control Planes</h3><p>Goal: make operational configuration manageable centrally.</p><p>Includes:</p><ul><li>per-session permission profiles,</li><li>mode drift visualization,</li><li>plugin inventory and version drift,</li><li>enable/disable/configure plugin actions,</li><li>bulk management flows.</li></ul><p>This phase succeeds if the workspace’s behavioral differences across servers are visible and controllable.</p><h3 id="phase-4-structured-claude-data-integration">Phase 4 — Structured Claude Data Integration</h3><p>Goal: replace or augment heuristic capture with structured session history.</p><p>Includes:</p><ul><li>reading <code>~/.claude</code> artifacts,</li><li>richer conversation history,</li><li>more accurate file/action views,</li><li>better diff and replay support,</li><li>more reliable prompt/state classification.</li></ul><p>This phase succeeds if Warren becomes both more accurate and more reviewable than tmux-only capture.</p><hr></section><section class="section-card"><h2 id="22-risks-and-design-tensions">22. Risks and Design Tensions</h2><h3 id="221-tmux-parsing-fragility">22.1 Tmux parsing fragility</h3><p>The biggest risk is that terminal capture is heuristic. Output formatting can shift, themes may vary, and partial content may confuse the parser.</p><p>Mitigation:</p><ul><li>confidence scores,</li><li>raw-output fallback,</li><li>state history for debugging,</li><li>replaceable parser architecture,</li><li>later <code>~/.claude</code> integration.</li></ul><h3 id="222-input-injection-ambiguity">22.2 Input injection ambiguity</h3><p>Sending a response into a live terminal session is powerful but dangerous if the session state changed between capture and action.</p><p>Mitigation:</p><ul><li>prompt validation before send,</li><li>quick recapture after send,</li><li>visible “prompt no longer matches” failures,</li><li>conservative default for destructive actions.</li></ul><h3 id="223-permission-mode-truth">22.3 Permission-mode truth</h3><p>Observed behavior and configured intent may diverge. A session might not immediately reflect Warren’s desired settings.</p><p>Mitigation:</p><ul><li>model desired vs observed separately,</li><li>surface drift explicitly,</li><li>record application strategy.</li></ul><h3 id="224-plugin-state-ambiguity">22.4 Plugin-state ambiguity</h3><p>Installed, enabled, and configured are different things. If Warren blurs them, the UI becomes misleading.</p><p>Mitigation:</p><ul><li>distinct fields and views for inventory, enablement, and config,</li><li>scope-aware UI labels.</li></ul><h3 id="225-mobile-surface-creep">22.5 Mobile surface creep</h3><p>A mobile app can easily become an awkward clone of the desktop tool.</p><p>Mitigation:</p><ul><li>keep mobile optimized for alerts, inspection, and short interventions,</li><li>reserve deep administrative work for the desktop TUI.</li></ul><hr></section><section class="section-card"><h2 id="23-open-questions">23. Open Questions</h2><p>These are the design questions that still matter most.</p><ol><li><strong>How reliable can phase-1 parsing be in real Claude Code sessions?</strong></li><li><strong>What is the exact safest control loop for sending input into tmux?</strong></li><li><strong>How should Warren distinguish current prompt context from stale visible text?</strong></li><li><strong>What is the best source of truth for permission mode: tmux-observed behavior, remote settings, or both?</strong></li><li><strong>How should Warren apply permission changes to running sessions when runtime config is not supported?</strong></li><li><strong>How much plugin state is session-scoped versus server-scoped in practice?</strong></li><li><strong>Should the mobile interface be a PWA first or a native shell over a web app?</strong></li><li><strong>When Warren later reads <code>~/.claude</code>, which data path becomes authoritative and which remains fallback?</strong></li><li><strong>What minimum capture frequency gives a responsive hub without creating too much SSH overhead?</strong></li><li><strong>How should Warren display confidence/uncertainty when state inference is ambiguous?</strong></li></ol><hr></section><section class="section-card"><h2 id="24-recommended-design-direction">24. Recommended Design Direction</h2><p>The strongest path forward is:</p><ul><li>keep the product centered on the <strong>central hub</strong> idea,</li><li>treat <strong>tmux capture + send-keys</strong> as the first practical integration layer,</li><li>build <strong>desktop TUI first</strong> as the main operator console,</li><li>keep <strong>mobile</strong> focused on attention and intervention,</li><li>make <strong>notifications, permissions, and plugins</strong> first-class surfaces rather than secondary settings,</li><li>preserve a clean seam for future structured ingestion from <code>~/.claude</code>.</li></ul><p>In short: Warren should first become the place where the user understands and supervises the whole distributed workspace. Only after that foundation is solid should it become smarter, deeper, and more automated.</p><hr></section><section class="section-card"><h2 id="25-review-checklist">25. Review Checklist</h2><p>This is the checklist a human reviewer should use while reading this design.</p><ul><li>Does the central-hub framing match the real product intent?</li><li>Is the separation between core, TUI, and mobile clear enough?</li><li>Are the phase boundaries sensible?</li><li>Does the state model capture the real attention states?</li><li>Are permission and plugin management treated at the right level of importance?</li><li>Does the interaction model feel safe enough for live session control?</li><li>Are the frontend surfaces appropriately distinct rather than over-combined?</li><li>Are the open questions the real blockers, or are any missing?</li></ul><hr></section><section class="section-card"><h2 id="26-appendix-short-positioning-statement">26. Appendix: Short Positioning Statement</h2><p>Warren is a central supervisory interface for distributed Claude Code sessions running inside remote tmux environments. It turns a fragmented SSH-and-tmux workspace into one visible, actionable control plane, starting with capture and intervention via tmux and evolving toward deeper session awareness through Claude-local metadata.</p></section></article>
+        <p class="footer-note">Source: <code>AGGREGATE-DESIGN-REVIEW.md</code></p>
+      </main>
+    </div>
+  </div>
+
+  <script id="source" type="text/plain"># Warren — Aggregate Design Review
+
+## 1. Overview
+
+Warren is a central hub for supervising and interacting with distributed coding-agent sessions that run inside tmux across multiple remote servers.
+
+The immediate problem is not deployment or orchestration in the abstract. The real problem is that a single working environment now spans many remote machines, many long-lived agent sessions, many plugin configurations, and many permission states. Today that workspace is fragmented across SSH logins and tmux windows. Warren pulls it back into one coherent control surface.
+
+At its core, Warren does four things:
+
+1. tracks where agent sessions live,
+2. captures what those sessions are doing,
+3. classifies when they need user attention,
+4. lets the user act on them from a central hub.
+
+The design is intentionally layered. The foundation is a local core that knows about servers, sessions, capture, and control. On top of that sit dedicated user interfaces: a desktop TUI for full control and a mobile interface for on-the-go supervision and intervention.
+
+This document combines the previously explored ideas into one review packet: product framing, architecture, interaction model, frontend design, state detection, plugin and permission management, phased delivery, diagrams, and open questions.
+
+---
+
+## 2. Product Vision
+
+Warren should feel like mission control for a distributed coding workspace.
+
+Instead of remembering which server hosts which agent, SSHing into the right machine, attaching the right tmux session, and reading terminal output one session at a time, the user should be able to open Warren and immediately answer:
+
+- What agents are running right now?
+- What is each one working on?
+- Which files is each agent touching?
+- Which agent is blocked, idle, finished, or asking for help?
+- Which plugin or permission setup differs between servers?
+- Where do I need to intervene right now?
+
+Warren is not primarily a replacement for tmux or SSH. It is a control layer over them.
+
+It should also not pretend to be a generic cluster manager. The center of gravity is Claude Code-style agent sessions: chat-oriented, tool-using, permission-gated, plugin-extended coding sessions that happen to live inside remote tmux panes.
+
+---
+
+## 3. Scope and Non-Goals
+
+### In scope
+
+- Central registry of remote servers and agent sessions
+- Tmux-backed session discovery and management
+- Capture of visible and recent session content from tmux panes
+- Parsing captured content into chat/activity/file/state summaries
+- Detection of actionable states such as waiting for permission, asking a question, or finished
+- Central interaction with sessions by sending input back into tmux
+- Central management of plugin inventory, enable/disable state, and version drift
+- Central management of per-session permission mode and related rules
+- Dedicated desktop TUI and mobile-facing frontend surfaces
+- A notification system driven by agent-state transitions
+
+### Out of scope for the current design
+
+- Full autonomous orchestration of multi-agent workflows
+- General-purpose deployment pipeline management
+- Replacing existing monitoring stacks like Prometheus or Grafana
+- Multi-user collaboration and RBAC-heavy enterprise sharing
+- Deep structured extraction from `~/.claude` as a first implementation step
+
+### Deferred but expected later
+
+- Reading and indexing session history from `~/.claude`
+- Rich file diff review tied to actual pending edits
+- Better session replay and timeline views
+- More explicit coordination primitives across agents
+
+---
+
+## 4. Core Design Principles
+
+1. **Centralize attention, not execution.** Agents still run remotely, inside tmux, on the machines where they belong. Warren centralizes visibility and control.
+2. **Use tmux as the first source of truth.** The first usable version should work by capturing panes and sending keys, because that matches the real runtime environment.
+3. **Separate core from interfaces.** Session capture/control logic must not be tangled with terminal or mobile UI code.
+4. **Design for intervention.** The most important states are the ones where the user must act: permission prompts, questions, completion, and errors.
+5. **Treat plugins and permissions as first-class operational state.** They are part of the workspace topology, not secondary settings.
+6. **Make drift visible.** Version mismatches, plugin-state differences, and permission-mode inconsistencies across servers should be easy to spot.
+7. **Stay reviewable by humans.** The product must make it easy to inspect what the agent saw, what it did, what file it touched, and why Warren believes the agent is in a given state.
+
+---
+
+## 5. System Context
+
+### High-level picture
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                        Warren Frontends                     │
+│                                                             │
+│   Desktop TUI                    Mobile App / Mobile Web    │
+│   - multi-pane                   - touch-first              │
+│   - keyboard-first               - alerts and quick action  │
+│   - operator console             - compact intervention     │
+└───────────────────────────────┬─────────────────────────────┘
+                                │
+                    commands / queries / events
+                                │
+┌───────────────────────────────▼─────────────────────────────┐
+│                         Warren Core                          │
+│                                                             │
+│  - server registry                                          │
+│  - agent registry                                           │
+│  - SSH transport / pooling                                  │
+│  - tmux capture + send-keys                                 │
+│  - activity parsing                                          │
+│  - state detection                                           │
+│  - permission configuration                                  │
+│  - plugin inventory + config                                 │
+│  - notification engine                                       │
+└───────────────────────────────┬─────────────────────────────┘
+                                │
+                                │ SSH
+                                │
+        ┌───────────────────────┼────────────────────────┐
+        │                       │                        │
+┌───────▼───────┐      ┌────────▼────────┐      ┌───────▼───────┐
+│   server-a    │      │    server-b     │      │   server-c    │
+│               │      │                  │      │               │
+│ tmux session  │      │ tmux session     │      │ tmux session  │
+│ Claude Code   │      │ Claude Code      │      │ Claude Code   │
+│ plugins       │      │ plugins          │      │ plugins       │
+│ ~/.claude     │      │ ~/.claude        │      │ ~/.claude     │
+└───────────────┘      └──────────────────┘      └───────────────┘
+```
+
+### Conceptual model
+
+- A **server** is a remote machine Warren can reach over SSH.
+- A **session** is a tmux session that hosts a coding agent.
+- An **agent** is Warren’s logical model of that session plus its metadata, state, and controls.
+- A **capture** is a recent pane snapshot taken from tmux.
+- An **activity summary** is a parsed view over one or more captures.
+- A **permission profile** is the configuration Warren associates with the session’s tool-approval behavior.
+- A **plugin profile** is the observed and desired plugin state for a server or session.
+
+---
+
+## 6. Core Architecture
+
+### 6.1 Warren Core
+
+Warren Core is the stable center of the system. It is not a UI. It is a library plus local command surface responsible for remote session supervision.
+
+Its responsibilities are:
+
+- store server definitions,
+- store known agent/session mappings,
+- connect to remote servers,
+- discover or target tmux sessions,
+- capture pane content,
+- parse captured content,
+- detect session state,
+- send input back into sessions,
+- manage permission settings,
+- manage plugin inventory and configuration,
+- emit events for notifications and UI updates.
+
+### 6.2 Remote runtime assumptions
+
+The first design assumes:
+
+- the coding agent already runs inside tmux on a remote server,
+- Warren can SSH to that server,
+- Warren can run tmux commands there,
+- Warren can read relevant Claude Code config/plugin directories,
+- Warren may later read `~/.claude` session artifacts directly.
+
+### 6.3 Interface surfaces
+
+Warren Core supports two frontends:
+
+- **Desktop TUI** as the full operator interface.
+- **Mobile interface** as a compact control and intervention surface.
+
+The frontends should consume the same model: agent list, agent details, state, recent activity, permissions, plugins, alerts, and actions.
+
+---
+
+## 7. Data and Domain Model
+
+### 7.1 Core entities
+
+```text
+Server
+- name
+- host
+- user
+- port
+- ssh options
+- tags
+
+AgentSession
+- logical name
+- server reference
+- tmux session name
+- session type
+- created_at
+- last_seen_at
+- capture policy
+
+AgentActivity
+- timestamp
+- raw tmux snapshot
+- parsed chat excerpts
+- parsed file interactions
+- parsed tool activity
+- pending prompt state
+- inferred agent state
+
+PermissionProfile
+- mode
+- tool rules
+- path rules
+- inheritance/default source
+
+PluginInventory
+- installed plugins per server
+- enabled/disabled state
+- version
+- components exposed
+- config overrides
+
+Notification
+- type
+- source agent
+- timestamp
+- severity
+- action affordances
+- read/unread
+```
+
+### 7.2 Storage direction
+
+The current design points toward simple local state for Warren itself, with remote truth fetched from servers.
+
+Likely local storage areas:
+
+- `~/.warren/config.yaml`
+- `~/.warren/servers.yaml`
+- `~/.warren/registry.json`
+- `~/.warren/plugins.json`
+- `~/.warren/notifications.json`
+- `~/.warren/cache/` for recent captures and parsed activity
+
+The design should preserve a clear distinction between:
+
+- **observed state** from remote servers,
+- **desired state** configured in Warren,
+- **derived state** such as inferred agent status or attention priority.
+
+---
+
+## 8. Capture and Parsing Pipeline
+
+### 8.1 Phase-1 capture source
+
+The first operational source is tmux itself.
+
+Warren captures recent pane content using tmux pane capture on the remote server. The capture window should include:
+
+- currently visible pane content,
+- recent scrollback,
+- enough lines to reconstruct recent chat and tool activity,
+- optionally ANSI escapes if the parser benefits from them.
+
+### 8.2 Capture pipeline
+
+```text
+remote tmux pane
+    ↓
+SSH command execution
+    ↓
+raw pane snapshot
+    ↓
+normalization
+    ↓
+parser stages
+    ├─ chat extraction
+    ├─ file interaction extraction
+    ├─ tool activity extraction
+    ├─ permission/question detection
+    └─ state inference
+    ↓
+agent activity model
+    ↓
+frontend views + notifications
+```
+
+### 8.3 Parser outputs
+
+The parser should attempt to extract at least:
+
+- recent user messages,
+- recent agent responses,
+- files read, written, edited, or referenced,
+- commands executed,
+- pending permission prompts,
+- pending user-choice questions,
+- finish/error markers,
+- recency of visible activity.
+
+### 8.4 Parser strategy
+
+The parser will initially be heuristic. It should be explicitly designed as a pipeline with confidence levels rather than one giant regex block.
+
+Recommended parser stages:
+
+1. normalize terminal content,
+2. split visible transcript into message/tool/prompt segments,
+3. extract structured hints such as paths and tool names,
+4. infer current state from recent segments,
+5. attach confidence and fall back to raw display when uncertain.
+
+### 8.5 Future structured source
+
+Later, Warren should support structured session/history ingestion from `~/.claude`.
+
+That future path matters because tmux capture is enough to build the hub, but it is not enough to guarantee perfect reconstruction of full session history, tool metadata, or proposed diffs. The design should therefore keep capture/parsing behind a replaceable interface.
+
+---
+
+## 9. Agent State Model
+
+Warren needs a first-class model of session state because the UI and notification system revolve around it.
+
+### 9.1 Canonical states
+
+```text
+idle
+thinking
+executing
+waiting_permission
+asking_question
+finished
+error
+unknown
+```
+
+### 9.2 State priority
+
+When multiple signals are present, Warren should classify according to user-action priority.
+
+Recommended precedence:
+
+1. `waiting_permission`
+2. `asking_question`
+3. `error`
+4. `finished`
+5. `executing`
+6. `thinking`
+7. `idle`
+8. `unknown`
+
+This ensures the hub surfaces the items most likely to need intervention.
+
+### 9.3 State detection approach
+
+State detection is driven by recent-capture analysis. Signals include:
+
+- visible permission prompts,
+- choice/question prompts,
+- error strings or obvious failure output,
+- explicit completion language,
+- tool activity or command execution,
+- spinner/progress activity,
+- empty prompt plus inactivity.
+
+### 9.4 State transitions
+
+State changes should be tracked as events, not just overwrites. This enables:
+
+- notification emission,
+- activity timelines,
+- debugging of parser behavior,
+- “what changed” views for operators.
+
+---
+
+## 10. Interaction Model
+
+The central promise of Warren is not just seeing sessions but acting on them without attaching to tmux directly.
+
+### 10.1 Passive operations
+
+- see current status,
+- inspect recent chat,
+- inspect recent file interactions,
+- inspect recent commands/tool use,
+- inspect plugin state,
+- inspect permission mode,
+- inspect drift across servers.
+
+### 10.2 Active operations
+
+- send a message into a session,
+- answer a question from a session,
+- approve or deny a permission prompt,
+- request a file view from the remote workspace,
+- open a session directly when full raw interaction is needed,
+- change permission mode for a session,
+- enable/disable/configure plugins.
+
+### 10.3 Important safety principle
+
+Warren should not fake certainty when interacting with a live terminal session. Sending input into tmux is powerful but blunt. The design should make it obvious:
+
+- what prompt Warren believes is active,
+- what response will be sent,
+- whether the response is safe to send,
+- whether the captured session changed before the action was applied.
+
+A simple model is: capture → validate prompt still matches → send input → recapture → confirm state transition.
+
+---
+
+## 11. Permission Management Design
+
+Permission mode is operational state and needs a dedicated control surface.
+
+### 11.1 Requirements
+
+Warren should know, per session:
+
+- current permission mode,
+- whether observed behavior matches configured mode,
+- tool-level allow/prompt/deny posture,
+- path-based exceptions,
+- whether a prompt is currently blocking the agent.
+
+### 11.2 Permission modes
+
+The design assumes Claude Code-style permission modes such as:
+
+- auto,
+- default,
+- plan,
+- acceptEdits,
+- dontAsk,
+- bypassPermissions.
+
+### 11.3 Desired vs observed mode
+
+This should be explicit in the UI.
+
+Example:
+
+- desired mode: `default`
+- observed mode: `auto`
+- drift: yes
+- action: reapply / inspect / restart with config
+
+### 11.4 Permission operations
+
+Warren should support:
+
+- changing mode for one session,
+- applying a default profile to multiple sessions,
+- managing allow/prompt/deny tool rules,
+- managing path-specific rules,
+- handling live prompts from the hub.
+
+### 11.5 Open implementation caution
+
+Changing permission mode at runtime may not be uniformly supported. The design should therefore allow multiple application strategies:
+
+- restart session with new mode,
+- mutate remote Claude Code settings,
+- invoke an in-session config command if supported.
+
+The product should show which strategy it used.
+
+---
+
+## 12. Plugin Management Design
+
+Plugins are part of the operational surface because different servers may have different plugin sets, versions, and enablement state.
+
+### 12.1 Requirements
+
+Warren should support:
+
+- plugin discovery on each server,
+- per-server inventory,
+- per-agent enable/disable status,
+- plugin version comparison across servers,
+- plugin configuration editing,
+- plugin sync and update workflows,
+- dependency/conflict inspection.
+
+### 12.2 Core distinction
+
+There are at least three useful scopes:
+
+- **installed on server**,
+- **enabled for session/agent**,
+- **configured with overrides at server or agent scope**.
+
+The UI should never collapse these into one ambiguous boolean.
+
+### 12.3 Operational value
+
+This matters because a session’s capabilities may differ for reasons that are otherwise hard to remember:
+
+- server-a has a newer review plugin,
+- server-b disabled a deployment plugin,
+- gpu-box has ML-specific plugins unavailable elsewhere,
+- an agent is blocked because the needed plugin is disabled.
+
+### 12.4 Plugin drift review
+
+The plugin surface should be designed partly as a drift-inspection tool:
+
+- which plugins differ,
+- which versions are behind,
+- which sessions run with non-default config,
+- which servers are inconsistent against a chosen baseline.
+
+---
+
+## 13. Notification System Design
+
+Notifications are not a generic convenience feature. They are the frontend expression of state detection.
+
+### 13.1 Notification triggers
+
+At minimum:
+
+- permission required,
+- agent asked a question,
+- agent finished,
+- agent hit an error,
+- agent stopped unexpectedly,
+- plugin update/drift detected.
+
+### 13.2 Priority model
+
+Recommended priority:
+
+- high: permission required, asking question, error,
+- medium: finished, stopped,
+- low: idle, startup, version drift.
+
+### 13.3 Delivery model
+
+Desktop TUI:
+
+- in-app attention list,
+- badges,
+- optionally system notifications.
+
+Mobile:
+
+- in-app inbox,
+- push notifications for high/medium priority,
+- direct action affordances where safe.
+
+### 13.4 Notification-centered workflow
+
+A key usage pattern is that a user enters Warren because something needs attention, not because they want to browse. So the notification system should link directly into the relevant session view and action surface.
+
+---
+
+## 14. Frontend Design Overview
+
+The frontend is not one screen. It is a set of specialized views around four domains:
+
+1. session management,
+2. notifications,
+3. plugin management,
+4. permission management.
+
+The desktop TUI is the primary heavy-duty console. The mobile UI is the compact supervisory/control companion.
+
+---
+
+## 15. Desktop TUI Design
+
+### 15.1 Role
+
+The desktop TUI is the main operator console. It should support:
+
+- scanning the whole workspace,
+- drilling into one agent,
+- resolving prompts quickly,
+- comparing plugin/permission state,
+- doing bulk administrative actions.
+
+### 15.2 Primary layout
+
+Recommended shape:
+
+- left pane: agent list / filters,
+- main pane: selected agent detail,
+- lower or side surfaces: notifications, activity, or detail tabs,
+- top-level navigation tabs: Sessions / Plugins / Permissions / Settings.
+
+### 15.3 Core session view
+
+```text
+┌─ Warren - Sessions ────────────────────────────────────────────────┐
+│  Agents                           Selected Session                │
+│  ┌──────────────────────┐        ┌─────────────────────────────┐ │
+│  │ backend-api   ⚠      │        │ backend-api @ prod-1       │ │
+│  │ ml-trainer    ●      │        │ state: waiting_permission  │ │
+│  │ frontend      ?      │        │ mode: default              │ │
+│  │ worker-3      ✓      │        │                             │ │
+│  │ scraper       ✗      │        │ recent chat                │ │
+│  └──────────────────────┘        │ files touched              │ │
+│                                  │ prompt awaiting answer     │ │
+│                                  │ [Approve] [Deny] [Reply]   │ │
+│                                  └─────────────────────────────┘ │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+### 15.4 Supporting views
+
+- session overview grid,
+- agent focus view,
+- file viewer,
+- plugin browser,
+- permission profile editor,
+- notification center.
+
+### 15.5 Interaction style
+
+Keyboard-first with predictable shortcuts:
+
+- navigate lists,
+- focus panels,
+- approve/deny quickly,
+- jump to notifications,
+- filter by state/server/tag,
+- open direct session attach when needed.
+
+---
+
+## 16. Mobile Interface Design
+
+### 16.1 Role
+
+The mobile interface is not a reduced copy of the TUI. It is an interruption-handling tool.
+
+Its primary jobs are:
+
+- tell the user what needs attention,
+- let the user inspect the minimum useful context,
+- let the user approve/deny/reply quickly,
+- let the user check progress while away from a full machine.
+
+### 16.2 Primary mobile surfaces
+
+- session home list,
+- agent detail,
+- notification inbox,
+- plugins list/detail,
+- permissions list/detail.
+
+### 16.3 Navigation
+
+Single-pane navigation with bottom tabs or a compact menu. The most important entry point is notifications.
+
+### 16.4 Mobile session card model
+
+Each agent row should include:
+
+- name,
+- server,
+- state icon,
+- last activity age,
+- one-line summary,
+- one-tap access to the relevant action.
+
+Example:
+
+```text
+● backend-api
+prod-1 • 2m ago
+Needs permission: edit src/auth.py
+[View]
+```
+
+### 16.5 Mobile action model
+
+Mobile should prioritize short, safe actions:
+
+- approve,
+- deny,
+- reply,
+- inspect recent context,
+- change mode,
+- mute notifications,
+- restart or stop only if those controls are explicitly intended.
+
+---
+
+## 17. Frontend Information Architecture
+
+### 17.1 Main areas
+
+```text
+Warren Frontend
+├── Sessions
+│   ├── All agents
+│   ├── Agent detail
+│   ├── Chat/activity summary
+│   ├── File interactions
+│   └── Inline intervention controls
+├── Notifications
+│   ├── Inbox
+│   ├── Per-type settings
+│   └── Quick jump to source agent
+├── Plugins
+│   ├── Server inventory
+│   ├── Agent enablement state
+│   ├── Version drift
+│   └── Config editor
+├── Permissions
+│   ├── Session mode list
+│   ├── Tool rules
+│   ├── Path rules
+│   └── Bulk apply
+└── Settings
+    ├── Servers
+    ├── Capture behavior
+    ├── Notification defaults
+    └── UI preferences
+```
+
+### 17.2 Relationship between areas
+
+- **Sessions** are where work is observed.
+- **Notifications** are where attention is summoned.
+- **Permissions** are where intervention policy is shaped.
+- **Plugins** are where capability drift is managed.
+
+These should remain distinct in the UI even if they share backing state.
+
+---
+
+## 18. Visualized Core Design
+
+### 18.1 Core processing diagram
+
+```text
+                remote server
+                     │
+                     │ SSH
+                     ▼
+             tmux capture-pane
+                     │
+                     ▼
+              raw terminal snapshot
+                     │
+          ┌──────────┼──────────┐
+          │          │          │
+          ▼          ▼          ▼
+      chat parse  file parse  prompt parse
+          │          │          │
+          └──────┬───┴──────┬───┘
+                 ▼          ▼
+              activity   state inference
+                 │          │
+                 └────┬─────┘
+                      ▼
+               agent activity model
+                      │
+      ┌───────────────┼────────────────┐
+      ▼               ▼                ▼
+  session UI     notifications    intervention actions
+```
+
+### 18.2 Attention model
+
+```text
+observed session content
+        ↓
+state detector
+        ↓
+Does user need to act?
+        ├─ no  → update status only
+        └─ yes → create notification + expose action controls
+```
+
+### 18.3 Control loop
+
+```text
+capture current prompt
+     ↓
+parse and identify state
+     ↓
+user chooses action
+     ↓
+validate prompt still current
+     ↓
+send keys into tmux session
+     ↓
+recapture session
+     ↓
+confirm state transition / report ambiguity
+```
+
+---
+
+## 19. Visualized Frontend Designs
+
+### 19.1 Desktop TUI overview
+
+```text
+┌──────────────────────────────── Warren ────────────────────────────────┐
+│ [Sessions] [Plugins] [Permissions] [Notifications] [Settings]         │
+├───────────────────────┬────────────────────────────────────────────────┤
+│ Agent List            │ Detail Pane                                    │
+│                       │                                                │
+│ ⚠ backend-api         │ backend-api @ prod-1                          │
+│ ● ml-trainer          │ mode: default                                 │
+│ ? frontend            │ state: waiting_permission                     │
+│ ✓ worker-3            │                                                │
+│ ✗ scraper             │ recent chat                                   │
+│                       │ files touched                                 │
+│ Filters               │ pending prompt                                │
+│ - by server           │ [Approve] [Deny] [Reply] [Open File]          │
+│ - by state            │                                                │
+│ - by tag              │                                                │
+├───────────────────────┴────────────────────────────────────────────────┤
+│ Notification strip: backend-api needs permission • frontend asked Q    │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### 19.2 Desktop plugin management
+
+```text
+┌──────────────────────────── Plugins ───────────────────────────────────┐
+│ Server tree                 Selected plugin                             │
+│                             code-review                                 │
+│ prod-1                      version drift: prod-2 behind                │
+│   ✓ code-review             enabled on: backend-api, frontend           │
+│   ✓ deployment              disabled on: scraper                        │
+│   ✗ testing-utils           actions: [Enable] [Disable] [Update]        │
+│                             config scopes: global/server/agent          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 19.3 Desktop permission management
+
+```text
+┌────────────────────────── Permissions ──────────────────────────────────┐
+│ Agent list                  Selected profile                            │
+│ backend-api  default        mode: default                               │
+│ ml-trainer   auto           tool rules                                  │
+│ frontend     plan           - Read: allow                               │
+│                             - Edit: prompt                              │
+│                             - Bash: deny                                │
+│                             path rules                                  │
+│                             - src/**/*.py allow edit                    │
+│                             - .env* deny all                            │
+│                             [Save] [Apply to many]                      │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 19.4 Mobile overview
+
+```text
+┌─────────────────────────────┐
+│ Warren                🔔 3  │
+├─────────────────────────────┤
+│ ⚠ backend-api              │
+│ prod-1 • needs permission  │
+│ [View] [Approve]           │
+│                             │
+│ ? frontend                 │
+│ prod-2 • asked question    │
+│ [View] [Reply]             │
+│                             │
+│ ● ml-trainer               │
+│ gpu-box • executing        │
+│ [View]                     │
+├─────────────────────────────┤
+│ Sessions  Plugins  Perms    │
+└─────────────────────────────┘
+```
+
+### 19.5 Mobile agent detail
+
+```text
+┌─────────────────────────────┐
+│ ← backend-api               │
+├─────────────────────────────┤
+│ state: waiting_permission   │
+│ mode: default               │
+│                             │
+│ recent chat                 │
+│ - User: Fix auth bug        │
+│ - Agent: I found the issue  │
+│                             │
+│ file: src/auth.py           │
+│ action: pending edit        │
+│                             │
+│ [View File]                 │
+│ [Approve] [Deny]            │
+│ [Reply]                     │
+└─────────────────────────────┘
+```
+
+---
+
+## 20. Operational Flows
+
+### 20.1 Permission-response flow
+
+1. Warren captures session output.
+2. Parser detects a permission prompt.
+3. Agent state becomes `waiting_permission`.
+4. Notification is emitted.
+5. User opens agent detail from notification.
+6. Warren shows recent chat and referenced file context.
+7. User approves or denies.
+8. Warren validates prompt freshness and sends response.
+9. Warren recaptures and verifies the session progressed.
+
+### 20.2 Question-response flow
+
+1. Agent asks a design or implementation question.
+2. Parser marks state as `asking_question`.
+3. Notification is emitted.
+4. User opens context.
+5. User chooses a quick option or sends a reply.
+6. Warren injects the response into tmux.
+7. Warren confirms the session resumed work.
+
+### 20.3 Plugin-drift review flow
+
+1. Warren scans plugins across servers.
+2. Version/state differences are recorded.
+3. Plugin dashboard highlights mismatches.
+4. User inspects one plugin.
+5. User updates, syncs, or changes enablement scope.
+6. Warren applies the action and records new observed state.
+
+### 20.4 Permission-profile maintenance flow
+
+1. User inspects a session repeatedly asking for the same class of action.
+2. User opens permission management.
+3. User edits the session’s permission profile or applies a broader profile.
+4. Warren applies via restart, remote settings mutation, or in-session config.
+5. Warren marks whether observed mode now matches desired mode.
+
+---
+
+## 21. Phased Delivery
+
+### Phase 1 — Central Read-Only Hub
+
+Goal: make the distributed workspace visible from one place.
+
+Includes:
+
+- server/session registry,
+- tmux capture,
+- activity parsing,
+- state detection,
+- session overview UI,
+- agent detail UI,
+- basic notification center,
+- file-interaction summaries.
+
+This phase succeeds if the user can open Warren and understand what each agent is doing and which ones need attention.
+
+### Phase 2 — Interactive Session Control
+
+Goal: act on sessions from the hub.
+
+Includes:
+
+- send messages into sessions,
+- answer questions,
+- approve/deny permission prompts,
+- open remote file viewer,
+- recapture/validate control loop,
+- tighter notification-to-action flow.
+
+This phase succeeds if the user rarely needs to attach directly to tmux for routine intervention.
+
+### Phase 3 — Permission and Plugin Control Planes
+
+Goal: make operational configuration manageable centrally.
+
+Includes:
+
+- per-session permission profiles,
+- mode drift visualization,
+- plugin inventory and version drift,
+- enable/disable/configure plugin actions,
+- bulk management flows.
+
+This phase succeeds if the workspace’s behavioral differences across servers are visible and controllable.
+
+### Phase 4 — Structured Claude Data Integration
+
+Goal: replace or augment heuristic capture with structured session history.
+
+Includes:
+
+- reading `~/.claude` artifacts,
+- richer conversation history,
+- more accurate file/action views,
+- better diff and replay support,
+- more reliable prompt/state classification.
+
+This phase succeeds if Warren becomes both more accurate and more reviewable than tmux-only capture.
+
+---
+
+## 22. Risks and Design Tensions
+
+### 22.1 Tmux parsing fragility
+
+The biggest risk is that terminal capture is heuristic. Output formatting can shift, themes may vary, and partial content may confuse the parser.
+
+Mitigation:
+
+- confidence scores,
+- raw-output fallback,
+- state history for debugging,
+- replaceable parser architecture,
+- later `~/.claude` integration.
+
+### 22.2 Input injection ambiguity
+
+Sending a response into a live terminal session is powerful but dangerous if the session state changed between capture and action.
+
+Mitigation:
+
+- prompt validation before send,
+- quick recapture after send,
+- visible “prompt no longer matches” failures,
+- conservative default for destructive actions.
+
+### 22.3 Permission-mode truth
+
+Observed behavior and configured intent may diverge. A session might not immediately reflect Warren’s desired settings.
+
+Mitigation:
+
+- model desired vs observed separately,
+- surface drift explicitly,
+- record application strategy.
+
+### 22.4 Plugin-state ambiguity
+
+Installed, enabled, and configured are different things. If Warren blurs them, the UI becomes misleading.
+
+Mitigation:
+
+- distinct fields and views for inventory, enablement, and config,
+- scope-aware UI labels.
+
+### 22.5 Mobile surface creep
+
+A mobile app can easily become an awkward clone of the desktop tool.
+
+Mitigation:
+
+- keep mobile optimized for alerts, inspection, and short interventions,
+- reserve deep administrative work for the desktop TUI.
+
+---
+
+## 23. Open Questions
+
+These are the design questions that still matter most.
+
+1. **How reliable can phase-1 parsing be in real Claude Code sessions?**
+2. **What is the exact safest control loop for sending input into tmux?**
+3. **How should Warren distinguish current prompt context from stale visible text?**
+4. **What is the best source of truth for permission mode: tmux-observed behavior, remote settings, or both?**
+5. **How should Warren apply permission changes to running sessions when runtime config is not supported?**
+6. **How much plugin state is session-scoped versus server-scoped in practice?**
+7. **Should the mobile interface be a PWA first or a native shell over a web app?**
+8. **When Warren later reads `~/.claude`, which data path becomes authoritative and which remains fallback?**
+9. **What minimum capture frequency gives a responsive hub without creating too much SSH overhead?**
+10. **How should Warren display confidence/uncertainty when state inference is ambiguous?**
+
+---
+
+## 24. Recommended Design Direction
+
+The strongest path forward is:
+
+- keep the product centered on the **central hub** idea,
+- treat **tmux capture + send-keys** as the first practical integration layer,
+- build **desktop TUI first** as the main operator console,
+- keep **mobile** focused on attention and intervention,
+- make **notifications, permissions, and plugins** first-class surfaces rather than secondary settings,
+- preserve a clean seam for future structured ingestion from `~/.claude`.
+
+In short: Warren should first become the place where the user understands and supervises the whole distributed workspace. Only after that foundation is solid should it become smarter, deeper, and more automated.
+
+---
+
+## 25. Review Checklist
+
+This is the checklist a human reviewer should use while reading this design.
+
+- Does the central-hub framing match the real product intent?
+- Is the separation between core, TUI, and mobile clear enough?
+- Are the phase boundaries sensible?
+- Does the state model capture the real attention states?
+- Are permission and plugin management treated at the right level of importance?
+- Does the interaction model feel safe enough for live session control?
+- Are the frontend surfaces appropriately distinct rather than over-combined?
+- Are the open questions the real blockers, or are any missing?
+
+---
+
+## 26. Appendix: Short Positioning Statement
+
+Warren is a central supervisory interface for distributed Claude Code sessions running inside remote tmux environments. It turns a fragmented SSH-and-tmux workspace into one visible, actionable control plane, starting with capture and intervention via tmux and evolving toward deeper session awareness through Claude-local metadata.
+</script>
+
+  <script>
+    const source = document.getElementById('source').textContent.replace(/\r\n/g, '\n').trim();
+    const article = document.getElementById('rendered');
+
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function slugify(text) {
+      return text
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .trim()
+        .replace(/\s+/g, '-');
+    }
+
+    function inlineFormat(text) {
+      return escapeHtml(text)
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/`([^`]+)`/g, '<code>$1</code>');
+    }
+
+    function renderMarkdown(md) {
+      const lines = md.split('\n');
+      let html = '';
+      let paragraph = [];
+      let inUl = false;
+      let inOl = false;
+      let inCode = false;
+      let codeLang = '';
+      let codeLines = [];
+
+      const closeLists = () => {
+        if (inUl) { html += '</ul>'; inUl = false; }
+        if (inOl) { html += '</ol>'; inOl = false; }
+      };
+
+      const flushParagraph = () => {
+        if (!paragraph.length) return;
+        html += `<p>${inlineFormat(paragraph.join(' '))}</p>`;
+        paragraph = [];
+      };
+
+      const flushCode = () => {
+        if (!inCode) return;
+        const label = codeLang || 'text';
+        html += `<figure class="code-figure"><div class="code-meta">${escapeHtml(label)}</div><pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre></figure>`;
+        inCode = false;
+        codeLang = '';
+        codeLines = [];
+      };
+
+      for (const rawLine of lines) {
+        const line = rawLine.replace(/\t/g, '  ');
+
+        if (inCode) {
+          if (line.startsWith('```')) {
+            flushCode();
+          } else {
+            codeLines.push(rawLine);
+          }
+          continue;
+        }
+
+        if (line.startsWith('```')) {
+          flushParagraph();
+          closeLists();
+          inCode = true;
+          codeLang = line.slice(3).trim();
+          continue;
+        }
+
+        if (/^\s*---\s*$/.test(line)) {
+          flushParagraph();
+          closeLists();
+          html += '<hr />';
+          continue;
+        }
+
+        if (/^#\s+/.test(line)) {
+          flushParagraph();
+          closeLists();
+          const text = line.replace(/^#\s+/, '').trim();
+          html += `<h1 id="${slugify(text)}" style="display:none;">${inlineFormat(text)}</h1>`;
+          continue;
+        }
+
+        if (/^##\s+/.test(line)) {
+          flushParagraph();
+          closeLists();
+          const text = line.replace(/^##\s+/, '').trim();
+          html += `<h2 id="${slugify(text)}">${inlineFormat(text)}</h2>`;
+          continue;
+        }
+
+        if (/^###\s+/.test(line)) {
+          flushParagraph();
+          closeLists();
+          const text = line.replace(/^###\s+/, '').trim();
+          html += `<h3 id="${slugify(text)}">${inlineFormat(text)}</h3>`;
+          continue;
+        }
+
+        if (/^\s*[-*]\s+/.test(line)) {
+          flushParagraph();
+          if (inOl) { html += '</ol>'; inOl = false; }
+          if (!inUl) { html += '<ul>'; inUl = true; }
+          html += `<li>${inlineFormat(line.replace(/^\s*[-*]\s+/, '').trim())}</li>`;
+          continue;
+        }
+
+        if (/^\s*\d+\.\s+/.test(line)) {
+          flushParagraph();
+          if (inUl) { html += '</ul>'; inUl = false; }
+          if (!inOl) { html += '<ol>'; inOl = true; }
+          html += `<li>${inlineFormat(line.replace(/^\s*\d+\.\s+/, '').trim())}</li>`;
+          continue;
+        }
+
+        if (line.trim() === '') {
+          flushParagraph();
+          closeLists();
+          continue;
+        }
+
+        paragraph.push(line.trim());
+      }
+
+      flushParagraph();
+      closeLists();
+      flushCode();
+      return html;
+    }
+
+    article.innerHTML = renderMarkdown(source);
+
+    function groupSections() {
+      const children = Array.from(article.children);
+      const grouped = document.createDocumentFragment();
+      let currentSection = null;
+
+      for (const node of children) {
+        if (node.tagName === 'H2') {
+          currentSection = document.createElement('section');
+          currentSection.className = 'section-card';
+          grouped.appendChild(currentSection);
+          currentSection.appendChild(node);
+        } else if (currentSection) {
+          currentSection.appendChild(node);
+        } else {
+          grouped.appendChild(node);
+        }
+      }
+
+      article.innerHTML = '';
+      article.appendChild(grouped);
+    }
+
+    groupSections();
+
+    const headings = Array.from(article.querySelectorAll('h2, h3'));
+    const toc = document.getElementById('toc');
+    const mobileToc = document.getElementById('mobile-toc');
+
+    headings.forEach((heading) => {
+      const link = document.createElement('a');
+      link.href = `#${heading.id}`;
+      link.textContent = heading.textContent;
+      link.className = heading.tagName === 'H3' ? 'level-3' : 'level-2';
+      toc.appendChild(link);
+
+      const mobileLink = link.cloneNode(true);
+      mobileToc.appendChild(mobileLink);
+    });
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        const id = entry.target.id;
+        document.querySelectorAll('.toc a').forEach((link) => {
+          link.classList.toggle('active', link.getAttribute('href') === `#${id}`);
+        });
+      });
+    }, {
+      rootMargin: '-20% 0px -65% 0px',
+      threshold: 0
+    });
+
+    headings.forEach((heading) => observer.observe(heading));
+  </script>
+
+</body></html>
