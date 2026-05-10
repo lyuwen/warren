@@ -13,43 +13,43 @@ This roadmap breaks the design into concrete implementation tasks with clear suc
 ### Tasks
 
 #### 1.1 Server Model
-- [ ] Define `Server` entity (name, host, user, port, ssh_options, kind: local/remote)
-- [ ] Implement local server detection (localhost as special case)
-- [ ] Implement SSH connection pooling for remote servers
-- [ ] Add server registry storage (`~/.warren/servers.yaml`)
-- [ ] Test: connect to local and remote servers
+- [x] Define `Server` entity (name, host, user, port, ssh_options, kind: local/remote)
+- [x] Implement local server detection (localhost as special case)
+- [x] Implement SSH connection pooling for remote servers
+- [x] Add server registry storage (`~/.warren/servers.yaml`)
+- [x] Test: connect to local and remote servers
 
 #### 1.2 Tmux Topology Discovery
-- [ ] Implement `tmux list-sessions` wrapper
-- [ ] Implement `tmux list-windows` wrapper for a given session
-- [ ] Implement `tmux list-panes` wrapper for a given window
-- [ ] Build topology model: Server → TmuxSession → Window → Pane
-- [ ] Store pane metadata (pane_id, title, dimensions)
-- [ ] Test: discover full tmux topology on local machine
-- [ ] Test: discover full tmux topology on remote server
+- [x] Implement `tmux list-sessions` wrapper
+- [x] Implement `tmux list-windows` wrapper for a given session
+- [x] Implement `tmux list-panes` wrapper for a given window
+- [x] Build topology model: Server → TmuxSession → Window → Pane
+- [x] Store pane metadata (pane_id, title, dimensions)
+- [x] Test: discover full tmux topology on local machine
+- [x] Test: discover full tmux topology on remote server
 
 #### 1.3 Pane Capture
-- [ ] Implement `tmux capture-pane` wrapper
-- [ ] Add configurable capture window (visible + scrollback lines)
-- [ ] Normalize captured content (strip ANSI if needed, handle encoding)
-- [ ] Test: capture content from a known pane
-- [ ] Test: capture content from a pane running Claude Code
-- [ ] Measure: capture latency and overhead
+- [x] Implement `tmux capture-pane` wrapper
+- [x] Add configurable capture window (visible + scrollback lines)
+- [x] Normalize captured content (strip ANSI if needed, handle encoding)
+- [x] Test: capture content from a known pane
+- [x] Test: capture content from a pane running Claude Code
+- [x] Measure: capture latency and overhead
 
 #### 1.4 Pane Control
-- [ ] Implement `tmux send-keys` wrapper for text input
-- [ ] Implement `tmux send-keys` wrapper for keystroke sequences
-- [ ] Add target pane validation before sending input
-- [ ] Test: send text into a pane and verify it appears
-- [ ] Test: send keystroke (e.g., Enter, Shift+Tab) and verify effect
-- [ ] Test: send input to wrong pane and handle error gracefully
+- [x] Implement `tmux send-keys` wrapper for text input
+- [x] Implement `tmux send-keys` wrapper for keystroke sequences
+- [x] Add target pane validation before sending input
+- [x] Test: send text into a pane and verify it appears
+- [x] Test: send keystroke (e.g., Enter, Shift+Tab) and verify effect
+- [x] Test: send input to wrong pane and handle error gracefully
 
 #### 1.5 Control Loop Validation
-- [ ] Implement: capture → validate state → send input → recapture → verify transition
-- [ ] Test: approve a permission prompt via keystroke
-- [ ] Test: send a reply to a question via text
-- [ ] Test: detect when target pane state changed between capture and action
-- [ ] Document: what works, what doesn't, what needs a better interface
+- [x] Implement: capture → validate state → send input → recapture → verify transition
+- [x] Test: approve a permission prompt via keystroke
+- [x] Test: send a reply to a question via text
+- [x] Test: detect when target pane state changed between capture and action
+- [x] Document: what works, what doesn't, what needs a better interface
 
 **Phase 1 Gate:** If tmux capture/control is too fragile or unreliable, stop and design a better tmux integration layer before proceeding.
 
@@ -64,36 +64,36 @@ This roadmap breaks the design into concrete implementation tasks with clear suc
 ### Tasks
 
 #### 2.1 Agent Session Registry
-- [ ] Define `AgentSession` entity (logical name, server ref, tmux topology ref, created_at, last_seen_at)
-- [ ] Implement agent session discovery (heuristic: detect Claude Code in pane title or content)
-- [ ] Store agent session mappings in registry (`~/.warren/registry.json`)
-- [ ] Add manual agent session registration (user specifies server/session/window/pane)
+- [x] Define `AgentSession` entity (logical name, server ref, tmux topology ref, created_at, last_seen_at)
+- [x] Implement agent session discovery (heuristic: detect Claude Code in pane title or content)
+- [ ] Store agent session mappings in registry (`~/.warren/registry.json`) - currently in-memory only
+- [x] Add manual agent session registration (user specifies server/session/window/pane)
 - [ ] Test: discover agent sessions across multiple servers
 
 #### 2.2 Event Store
-- [ ] Choose DB (SQLite recommended for local-first design)
-- [ ] Design event schema for `AgentActivityEvent` and `NotificationEvent`
-- [ ] Implement event append (write-only, immutable events)
-- [ ] Implement event query (by agent, by time range, by type)
-- [ ] Add event retention policy (configurable, default 30 days)
-- [ ] Test: write and query activity events
+- [x] Choose DB (SQLite recommended for local-first design)
+- [x] Design event schema for `AgentActivityEvent` and `NotificationEvent`
+- [x] Implement event append (write-only, immutable events)
+- [x] Implement event query (by agent, by time range, by type)
+- [x] Add event retention policy (configurable, default 30 days)
+- [x] Test: write and query activity events
 
 #### 2.3 Activity Parser
-- [ ] Implement normalization stage (clean captured content)
-- [ ] Implement chat extraction (detect user/agent messages)
-- [ ] Implement file interaction extraction (detect Read/Edit/Write tool calls)
-- [ ] Implement tool activity extraction (detect Bash, LSP, other tools)
-- [ ] Implement prompt detection (permission prompts, questions)
-- [ ] Emit parsed results as `AgentActivityEvent` records
-- [ ] Attach confidence scores to parsed results
-- [ ] Test: parse known Claude Code session captures
+- [x] Implement normalization stage (clean captured content)
+- [x] Implement chat extraction (detect user/agent messages)
+- [x] Implement file interaction extraction (detect Read/Edit/Write tool calls)
+- [x] Implement tool activity extraction (detect Bash, LSP, other tools)
+- [x] Implement prompt detection (permission prompts, questions)
+- [x] Emit parsed results as `AgentActivityEvent` records
+- [x] Attach confidence scores to parsed results
+- [x] Test: parse known Claude Code session captures
 
 #### 2.4 State Detection
-- [ ] Implement state inference from recent activity events
-- [ ] Map detected signals to canonical states (idle, thinking, executing, waiting_permission, asking_question, finished, error, unknown)
-- [ ] Apply state priority rules when multiple signals present
-- [ ] Emit state transition events
-- [ ] Test: detect state from real session captures
+- [x] Implement state inference from recent activity events
+- [x] Map detected signals to canonical states (idle, thinking, executing, waiting_permission, asking_question, finished, error, unknown)
+- [x] Apply state priority rules when multiple signals present
+- [x] Emit state transition events
+- [x] Test: detect state from real session captures
 
 #### 2.5 Artifact Profile Extraction
 - [ ] Define `ArtifactProfile` entity (repo roots, files visited, files edited)
@@ -102,9 +102,10 @@ This roadmap breaks the design into concrete implementation tasks with clear suc
 - [ ] Test: track files touched by an agent over time
 
 #### 2.6 Notification Engine
-- [ ] Define notification triggers (permission required, question asked, finished, error, stopped)
-- [ ] Emit `NotificationEvent` on state transitions
-- [ ] Store notifications in event DB
+- [x] Define notification triggers (permission required, question asked, finished, error, stopped)
+- [x] Emit `NotificationEvent` on state transitions - schema exists
+- [x] Store notifications in event DB
+- [ ] Implement notification service that watches state changes
 - [ ] Mark notifications as consumed when user acts on them
 - [ ] Test: generate notifications from state changes
 
