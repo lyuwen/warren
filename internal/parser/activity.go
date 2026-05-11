@@ -50,11 +50,16 @@ func NewActivityParser() *ActivityParser {
 			regexp.MustCompile(`(?i)allow\s+this\s+action`),
 		},
 		questionPatterns: []*regexp.Regexp{
-			regexp.MustCompile(`(?i)which\s+.+\?`),
-			regexp.MustCompile(`(?i)should\s+i\s+.+\?`),
-			regexp.MustCompile(`(?i)do\s+you\s+want\s+.+\?`),
-			regexp.MustCompile(`(?i)would\s+you\s+like\s+.+\?`),
-			regexp.MustCompile(`(?i)how\s+should\s+.+\?`),
+			// Look for Claude Code's AskUserQuestion tool usage
+			regexp.MustCompile(`(?i)AskUserQuestion`),
+			// Look for actual questions at end of output (standalone lines)
+			// These patterns are much more specific to avoid false positives
+			regexp.MustCompile(`(?m)^What would you like .*\?$`),
+			regexp.MustCompile(`(?m)^Should I .*\?$`),
+			regexp.MustCompile(`(?m)^Would you like .*\?$`),
+			regexp.MustCompile(`(?m)^Do you want .*\?$`),
+			regexp.MustCompile(`(?m)^How should I .*\?$`),
+			regexp.MustCompile(`(?m)^Which .*would you prefer\?$`),
 		},
 	}
 }
@@ -244,20 +249,44 @@ func (p *ActivityParser) parsePrompts(agentID string, content string, timestamp 
 		}
 	}
 
-	// Check for questions
-	for _, pattern := range p.questionPatterns {
-		matches := pattern.FindAllString(content, -1)
-		for _, match := range matches {
-			activity := &events.AgentActivityEvent{
-				AgentID:      agentID,
-				ActivityType: "prompt",
-				Content:      match,
-				Metadata: map[string]string{
-					"prompt_type": "question",
-				},
-				Timestamp: timestamp,
+	// Check for questions - much more strict to avoid false positives
+	// Only detect questions that appear at the END of content (last non-empty lines)
+	lines := strings.Split(content, "\n")
+
+	// Get last 5 non-empty lines (where real questions appear)
+	lastLines := []string{}
+	for i := len(lines) - 1; i >= 0 && len(lastLines) < 5; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			lastLines = append([]string{line}, lastLines...)
+		}
+	}
+
+	// Check if any of the last lines match question patterns
+	for _, line := range lastLines {
+		// Skip lines that are clearly not questions to user
+		if strings.HasPrefix(line, "//") || // Code comments
+			strings.HasPrefix(line, "#") || // Comments
+			strings.Contains(line, "```") || // Code blocks
+			strings.HasPrefix(line, "*") || // Markdown lists
+			strings.HasPrefix(line, "-") { // Markdown lists
+			continue
+		}
+
+		for _, pattern := range p.questionPatterns {
+			if pattern.MatchString(line) {
+				activity := &events.AgentActivityEvent{
+					AgentID:      agentID,
+					ActivityType: "prompt",
+					Content:      line,
+					Metadata: map[string]string{
+						"prompt_type": "question",
+					},
+					Timestamp: timestamp,
+				}
+				activities = append(activities, activity)
+				break // Only one question per line
 			}
-			activities = append(activities, activity)
 		}
 	}
 
