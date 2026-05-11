@@ -145,6 +145,7 @@ func TestGenerateSessionID(t *testing.T) {
 		TmuxSessionName: "session1",
 		TmuxWindowIndex: 0,
 		TmuxPaneID:      "%1",
+		TmuxPaneIndex:   1,
 	}
 
 	id := GenerateSessionID(result)
@@ -162,6 +163,7 @@ func TestDiscoveryResult_ToAgentSession(t *testing.T) {
 		TmuxSessionName: "session1",
 		TmuxWindowIndex: 0,
 		TmuxPaneID:      "%1",
+		TmuxPaneIndex:   1,
 		AgentType:       "claude-code",
 		Confidence:      0.95,
 		Evidence:        []string{"matched pattern: claude code"},

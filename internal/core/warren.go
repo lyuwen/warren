@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -293,7 +294,7 @@ func (w *Warren) GetSessionState(agentID string) (AgentState, error) {
 	return session.CurrentState, nil
 }
 
-// GetAllSessions returns all monitored sessions
+// GetAllSessions returns all monitored sessions in sorted order
 func (w *Warren) GetAllSessions() []*MonitoredSession {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -302,6 +303,12 @@ func (w *Warren) GetAllSessions() []*MonitoredSession {
 	for _, session := range w.sessions {
 		sessions = append(sessions, session)
 	}
+
+	// Sort for stable, predictable ordering
+	sort.Slice(sessions, func(i, j int) bool {
+		// Primary: Agent ID (which includes server:session:window.pane)
+		return sessions[i].AgentID < sessions[j].AgentID
+	})
 
 	return sessions
 }

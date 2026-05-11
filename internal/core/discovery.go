@@ -26,6 +26,7 @@ type DiscoveryResult struct {
 	TmuxSessionName string
 	TmuxWindowIndex int
 	TmuxPaneID      string
+	TmuxPaneIndex   int      // Pane index (0, 1, 2...) for display
 	AgentType       string
 	Confidence      float64 // 0.0 to 1.0
 	Evidence        []string
@@ -164,6 +165,8 @@ func (d *AgentDiscovery) DiscoverAll(topology *tmux.Topology, minConfidence floa
 				}
 
 				if result != nil && result.Confidence >= minConfidence {
+					// Store the pane index for display purposes
+					result.TmuxPaneIndex = pane.Index
 					results = append(results, result)
 				}
 			}
@@ -176,25 +179,19 @@ func (d *AgentDiscovery) DiscoverAll(topology *tmux.Topology, minConfidence floa
 // GenerateSessionID generates a unique session ID from discovery result
 // Format: server:session:window.pane (e.g., localhost:0:10.0)
 func GenerateSessionID(result *DiscoveryResult) string {
-	// Extract pane number from pane ID (e.g., "%2" -> "2")
-	paneNum := strings.TrimPrefix(result.TmuxPaneID, "%")
-
-	return fmt.Sprintf("%s:%s:%d.%s",
+	return fmt.Sprintf("%s:%s:%d.%d",
 		result.ServerName,
 		result.TmuxSessionName,
 		result.TmuxWindowIndex,
-		paneNum,
+		result.TmuxPaneIndex,
 	)
 }
 
 // ToAgentSession converts a discovery result to an agent session
 func (r *DiscoveryResult) ToAgentSession() *AgentSession {
-	// Extract pane number from pane ID (e.g., "%2" -> "2")
-	paneNum := strings.TrimPrefix(r.TmuxPaneID, "%")
-
 	// Create human-readable name: hostname/session:window.pane
 	// Include hostname for multi-server clarity
-	humanName := fmt.Sprintf("%s/%s:%d.%s", r.ServerName, r.TmuxSessionName, r.TmuxWindowIndex, paneNum)
+	humanName := fmt.Sprintf("%s/%s:%d.%d", r.ServerName, r.TmuxSessionName, r.TmuxWindowIndex, r.TmuxPaneIndex)
 
 	return &AgentSession{
 		ID:              GenerateSessionID(r),
@@ -202,6 +199,7 @@ func (r *DiscoveryResult) ToAgentSession() *AgentSession {
 		ServerName:      r.ServerName,
 		TmuxSessionName: r.TmuxSessionName,
 		TmuxWindowIndex: r.TmuxWindowIndex,
+		TmuxPaneIndex:   r.TmuxPaneIndex,
 		TmuxPaneID:      r.TmuxPaneID,
 		AgentType:       r.AgentType,
 		CurrentState:    StateUnknown,

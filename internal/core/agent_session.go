@@ -25,6 +25,9 @@ type AgentSession struct {
 	// TmuxWindowIndex is the window index within the session
 	TmuxWindowIndex int `json:"tmux_window_index"`
 
+	// TmuxPaneIndex is the pane index within the window
+	TmuxPaneIndex int `json:"tmux_pane_index"`
+
 	// TmuxPaneID is the pane ID (e.g., "%1")
 	TmuxPaneID string `json:"tmux_pane_id"`
 
@@ -140,8 +143,8 @@ func (r *AgentSessionRegistry) List() []*AgentSession {
 		if sessions[i].TmuxWindowIndex != sessions[j].TmuxWindowIndex {
 			return sessions[i].TmuxWindowIndex < sessions[j].TmuxWindowIndex
 		}
-		// Quaternary: Pane ID
-		return sessions[i].TmuxPaneID < sessions[j].TmuxPaneID
+		// Quaternary: Pane index (not pane ID)
+		return sessions[i].TmuxPaneIndex < sessions[j].TmuxPaneIndex
 	})
 
 	return sessions
@@ -164,7 +167,7 @@ func (r *AgentSessionRegistry) ListByServer(serverName string) []*AgentSession {
 		if sessions[i].TmuxWindowIndex != sessions[j].TmuxWindowIndex {
 			return sessions[i].TmuxWindowIndex < sessions[j].TmuxWindowIndex
 		}
-		return sessions[i].TmuxPaneID < sessions[j].TmuxPaneID
+		return sessions[i].TmuxPaneIndex < sessions[j].TmuxPaneIndex
 	})
 
 	return sessions
@@ -190,7 +193,7 @@ func (r *AgentSessionRegistry) ListByState(state AgentState) []*AgentSession {
 		if sessions[i].TmuxWindowIndex != sessions[j].TmuxWindowIndex {
 			return sessions[i].TmuxWindowIndex < sessions[j].TmuxWindowIndex
 		}
-		return sessions[i].TmuxPaneID < sessions[j].TmuxPaneID
+		return sessions[i].TmuxPaneIndex < sessions[j].TmuxPaneIndex
 	})
 
 	return sessions
@@ -216,7 +219,7 @@ func (r *AgentSessionRegistry) ListActionable() []*AgentSession {
 		if sessions[i].TmuxWindowIndex != sessions[j].TmuxWindowIndex {
 			return sessions[i].TmuxWindowIndex < sessions[j].TmuxWindowIndex
 		}
-		return sessions[i].TmuxPaneID < sessions[j].TmuxPaneID
+		return sessions[i].TmuxPaneIndex < sessions[j].TmuxPaneIndex
 	})
 
 	return sessions
