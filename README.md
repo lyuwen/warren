@@ -29,6 +29,22 @@ go build -o warren-web ./cmd/warren-web
 
 ### Usage
 
+**Prerequisites:** Tmux running with Claude Code agents in panes.
+
+**Start Web Interface (Recommended):**
+```bash
+./warren-web -addr :8080
+# Open browser: http://localhost:8080
+```
+
+**Start Terminal UI:**
+```bash
+./warren-tui
+# Navigate with ↑/↓, Enter, Tab, q
+```
+
+**See [Getting Started Guide](docs/getting-started.md) for detailed instructions.**
+
 **Phase 1 - Tmux Interface:**
 ```bash
 # Discover tmux topology
