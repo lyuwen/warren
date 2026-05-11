@@ -65,7 +65,7 @@ func TestAgentDiscovery_DetectClaudeCode(t *testing.T) {
 			client := tmux.NewClient(executor)
 			discovery := NewAgentDiscovery(client)
 
-			result, err := discovery.DiscoverInPane("test-server", "test-session", 0, "%1")
+			result, err := discovery.DiscoverInPane("test-server", "test-session", 0, "%1", "claude")
 			if err != nil {
 				t.Fatalf("Discovery failed: %v", err)
 			}
@@ -119,7 +119,7 @@ func TestAgentDiscovery_DetectCopilot(t *testing.T) {
 			client := tmux.NewClient(executor)
 			discovery := NewAgentDiscovery(client)
 
-			result, err := discovery.DiscoverInPane("test-server", "test-session", 0, "%1")
+			result, err := discovery.DiscoverInPane("test-server", "test-session", 0, "%1", "claude")
 			if err != nil {
 				t.Fatalf("Discovery failed: %v", err)
 			}
@@ -207,8 +207,8 @@ func TestDiscoveryResult_ToAgentSession(t *testing.T) {
 
 func TestAgentDiscovery_DiscoverAll(t *testing.T) {
 	// Create a mock topology
-	pane1 := &tmux.Pane{ID: "%1", Index: 0}
-	pane2 := &tmux.Pane{ID: "%2", Index: 1}
+	pane1 := &tmux.Pane{ID: "%1", Index: 0, CurrentCommand: "claude"}
+	pane2 := &tmux.Pane{ID: "%2", Index: 1, CurrentCommand: "node"}
 
 	window := &tmux.Window{
 		Index: 0,

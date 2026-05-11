@@ -51,7 +51,13 @@ var copilotPatterns = []*regexp.Regexp{
 }
 
 // DiscoverInPane analyzes a pane to detect if it contains an agent session
-func (d *AgentDiscovery) DiscoverInPane(serverName string, sessionName string, windowIndex int, paneID string) (*DiscoveryResult, error) {
+func (d *AgentDiscovery) DiscoverInPane(serverName string, sessionName string, windowIndex int, paneID string, currentCommand string) (*DiscoveryResult, error) {
+	// CRITICAL: Check current command FIRST to avoid false positives
+	// Only analyze content if the pane is running a known agent process
+	if !isAgentCommand(currentCommand) {
+		return nil, nil // Not an agent process, skip content analysis
+	}
+
 	// Capture pane content
 	result, err := d.tmuxClient.GetRecentContent(paneID, 200)
 	if err != nil {
@@ -79,6 +85,28 @@ func (d *AgentDiscovery) DiscoverInPane(serverName string, sessionName string, w
 	}
 
 	return nil, nil // No agent detected
+}
+
+// isAgentCommand checks if the command is a known agent process
+func isAgentCommand(command string) bool {
+	// Known agent commands
+	agentCommands := []string{
+		"claude",      // Claude Code CLI
+		"node",        // Node.js (for Claude Code and other agents)
+		"python",      // Python agents
+		"gh",          // GitHub Copilot CLI
+		"aider",       // Aider AI
+		"cursor",      // Cursor AI
+	}
+
+	// Check if command matches any known agent
+	for _, agentCmd := range agentCommands {
+		if strings.HasPrefix(command, agentCmd) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (d *AgentDiscovery) detectClaudeCode(content string) *DiscoveryResult {
@@ -157,6 +185,7 @@ func (d *AgentDiscovery) DiscoverAll(topology *tmux.Topology, minConfidence floa
 					session.Name,
 					window.Index,
 					pane.ID,
+					pane.CurrentCommand, // Pass current command for filtering
 				)
 
 				if err != nil {

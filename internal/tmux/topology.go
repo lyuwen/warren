@@ -28,14 +28,15 @@ type Window struct {
 
 // Pane represents a tmux pane within a window
 type Pane struct {
-	ID       string
-	Index    int
-	Title    string
-	Width    int
-	Height   int
-	Active   bool
-	WindowID string
-	PID      int // Process ID running in the pane
+	ID             string
+	Index          int
+	Title          string
+	Width          int
+	Height         int
+	Active         bool
+	WindowID       string
+	PID            int    // Process ID running in the pane
+	CurrentCommand string // Current command running in the pane
 }
 
 // Topology represents the complete tmux topology for a server
@@ -147,8 +148,8 @@ func (c *Client) ListWindows(sessionName string) ([]*Window, error) {
 // ListPanes returns all panes for a given window
 func (c *Client) ListPanes(sessionName string, windowIndex int) ([]*Pane, error) {
 	target := fmt.Sprintf("%s:%d", sessionName, windowIndex)
-	// Format: pane_id:pane_index:pane_title:pane_width:pane_height:pane_active:pane_pid
-	format := "#{pane_id}:#{pane_index}:#{pane_title}:#{pane_width}:#{pane_height}:#{pane_active}:#{pane_pid}"
+	// Format: pane_id:pane_index:pane_title:pane_width:pane_height:pane_active:pane_pid:pane_current_command
+	format := "#{pane_id}:#{pane_index}:#{pane_title}:#{pane_width}:#{pane_height}:#{pane_active}:#{pane_pid}:#{pane_current_command}"
 	output, err := c.executor.Execute("tmux", "list-panes", "-t", target, "-F", format)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list panes for %s: %w", target, err)
@@ -163,7 +164,7 @@ func (c *Client) ListPanes(sessionName string, windowIndex int) ([]*Pane, error)
 		}
 
 		parts := strings.Split(line, ":")
-		if len(parts) < 7 {
+		if len(parts) < 8 {
 			continue
 		}
 
@@ -173,13 +174,14 @@ func (c *Client) ListPanes(sessionName string, windowIndex int) ([]*Pane, error)
 		pid, _ := strconv.Atoi(parts[6])
 
 		pane := &Pane{
-			ID:     parts[0],
-			Index:  index,
-			Title:  parts[2],
-			Width:  width,
-			Height: height,
-			Active: parts[5] == "1",
-			PID:    pid,
+			ID:             parts[0],
+			Index:          index,
+			Title:          parts[2],
+			Width:          width,
+			Height:         height,
+			Active:         parts[5] == "1",
+			PID:            pid,
+			CurrentCommand: parts[7],
 		}
 
 		panes = append(panes, pane)
