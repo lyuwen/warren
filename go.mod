@@ -8,6 +8,7 @@ require (
 )
 
 require (
+	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/mattn/go-sqlite3 v1.14.44 // indirect
 	golang.org/x/sys v0.44.0 // indirect
 )
