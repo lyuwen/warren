@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/lfu/warren/internal/types"
@@ -117,16 +118,36 @@ func (r *AgentSessionRegistry) GetByPane(serverName, paneID string) (*AgentSessi
 	return nil, fmt.Errorf("no agent session found for pane %s on server %s", paneID, serverName)
 }
 
-// List returns all registered agent sessions
+// List returns all registered agent sessions in sorted order
+// Sort order: server name → session name → window index → pane ID
 func (r *AgentSessionRegistry) List() []*AgentSession {
 	sessions := make([]*AgentSession, 0, len(r.sessions))
 	for _, session := range r.sessions {
 		sessions = append(sessions, session)
 	}
+
+	// Sort for stable, predictable ordering
+	sort.Slice(sessions, func(i, j int) bool {
+		// Primary: Server name
+		if sessions[i].ServerName != sessions[j].ServerName {
+			return sessions[i].ServerName < sessions[j].ServerName
+		}
+		// Secondary: Tmux session name
+		if sessions[i].TmuxSessionName != sessions[j].TmuxSessionName {
+			return sessions[i].TmuxSessionName < sessions[j].TmuxSessionName
+		}
+		// Tertiary: Window index
+		if sessions[i].TmuxWindowIndex != sessions[j].TmuxWindowIndex {
+			return sessions[i].TmuxWindowIndex < sessions[j].TmuxWindowIndex
+		}
+		// Quaternary: Pane ID
+		return sessions[i].TmuxPaneID < sessions[j].TmuxPaneID
+	})
+
 	return sessions
 }
 
-// ListByServer returns all agent sessions on a specific server
+// ListByServer returns all agent sessions on a specific server in sorted order
 func (r *AgentSessionRegistry) ListByServer(serverName string) []*AgentSession {
 	sessions := make([]*AgentSession, 0)
 	for _, session := range r.sessions {
@@ -134,10 +155,22 @@ func (r *AgentSessionRegistry) ListByServer(serverName string) []*AgentSession {
 			sessions = append(sessions, session)
 		}
 	}
+
+	// Sort by session → window → pane
+	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].TmuxSessionName != sessions[j].TmuxSessionName {
+			return sessions[i].TmuxSessionName < sessions[j].TmuxSessionName
+		}
+		if sessions[i].TmuxWindowIndex != sessions[j].TmuxWindowIndex {
+			return sessions[i].TmuxWindowIndex < sessions[j].TmuxWindowIndex
+		}
+		return sessions[i].TmuxPaneID < sessions[j].TmuxPaneID
+	})
+
 	return sessions
 }
 
-// ListByState returns all agent sessions in a specific state
+// ListByState returns all agent sessions in a specific state in sorted order
 func (r *AgentSessionRegistry) ListByState(state AgentState) []*AgentSession {
 	sessions := make([]*AgentSession, 0)
 	for _, session := range r.sessions {
@@ -145,10 +178,25 @@ func (r *AgentSessionRegistry) ListByState(state AgentState) []*AgentSession {
 			sessions = append(sessions, session)
 		}
 	}
+
+	// Sort by server → session → window → pane
+	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].ServerName != sessions[j].ServerName {
+			return sessions[i].ServerName < sessions[j].ServerName
+		}
+		if sessions[i].TmuxSessionName != sessions[j].TmuxSessionName {
+			return sessions[i].TmuxSessionName < sessions[j].TmuxSessionName
+		}
+		if sessions[i].TmuxWindowIndex != sessions[j].TmuxWindowIndex {
+			return sessions[i].TmuxWindowIndex < sessions[j].TmuxWindowIndex
+		}
+		return sessions[i].TmuxPaneID < sessions[j].TmuxPaneID
+	})
+
 	return sessions
 }
 
-// ListActionable returns all agent sessions that need user attention
+// ListActionable returns all agent sessions that need user attention in sorted order
 func (r *AgentSessionRegistry) ListActionable() []*AgentSession {
 	sessions := make([]*AgentSession, 0)
 	for _, session := range r.sessions {
@@ -156,6 +204,21 @@ func (r *AgentSessionRegistry) ListActionable() []*AgentSession {
 			sessions = append(sessions, session)
 		}
 	}
+
+	// Sort by server → session → window → pane
+	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].ServerName != sessions[j].ServerName {
+			return sessions[i].ServerName < sessions[j].ServerName
+		}
+		if sessions[i].TmuxSessionName != sessions[j].TmuxSessionName {
+			return sessions[i].TmuxSessionName < sessions[j].TmuxSessionName
+		}
+		if sessions[i].TmuxWindowIndex != sessions[j].TmuxWindowIndex {
+			return sessions[i].TmuxWindowIndex < sessions[j].TmuxWindowIndex
+		}
+		return sessions[i].TmuxPaneID < sessions[j].TmuxPaneID
+	})
+
 	return sessions
 }
 
