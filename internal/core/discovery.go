@@ -174,19 +174,30 @@ func (d *AgentDiscovery) DiscoverAll(topology *tmux.Topology, minConfidence floa
 }
 
 // GenerateSessionID generates a unique session ID from discovery result
+// Format: server:session:window.pane (e.g., localhost:0:10.0)
 func GenerateSessionID(result *DiscoveryResult) string {
-	return fmt.Sprintf("%s-%s-%s",
+	// Extract pane number from pane ID (e.g., "%2" -> "2")
+	paneNum := strings.TrimPrefix(result.TmuxPaneID, "%")
+
+	return fmt.Sprintf("%s:%s:%d.%s",
 		result.ServerName,
 		result.TmuxSessionName,
-		result.TmuxPaneID,
+		result.TmuxWindowIndex,
+		paneNum,
 	)
 }
 
 // ToAgentSession converts a discovery result to an agent session
 func (r *DiscoveryResult) ToAgentSession() *AgentSession {
+	// Extract pane number from pane ID (e.g., "%2" -> "2")
+	paneNum := strings.TrimPrefix(r.TmuxPaneID, "%")
+
+	// Create human-readable name: session:window.pane
+	humanName := fmt.Sprintf("%s:%d.%s", r.TmuxSessionName, r.TmuxWindowIndex, paneNum)
+
 	return &AgentSession{
 		ID:              GenerateSessionID(r),
-		Name:            fmt.Sprintf("%s on %s", r.AgentType, r.ServerName),
+		Name:            humanName,
 		ServerName:      r.ServerName,
 		TmuxSessionName: r.TmuxSessionName,
 		TmuxWindowIndex: r.TmuxWindowIndex,

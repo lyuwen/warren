@@ -143,11 +143,13 @@ func TestGenerateSessionID(t *testing.T) {
 	result := &DiscoveryResult{
 		ServerName:      "server1",
 		TmuxSessionName: "session1",
+		TmuxWindowIndex: 0,
 		TmuxPaneID:      "%1",
 	}
 
 	id := GenerateSessionID(result)
-	expected := "server1-session1-%1"
+	// New format: server:session:window.pane
+	expected := "server1:session1:0.1"
 
 	if id != expected {
 		t.Errorf("Expected ID %s, got %s", expected, id)
@@ -167,8 +169,16 @@ func TestDiscoveryResult_ToAgentSession(t *testing.T) {
 
 	session := result.ToAgentSession()
 
-	if session.ID != "server1-session1-%1" {
-		t.Errorf("Expected ID server1-session1-%%1, got %s", session.ID)
+	// New format: server:session:window.pane
+	expectedID := "server1:session1:0.1"
+	if session.ID != expectedID {
+		t.Errorf("Expected ID %s, got %s", expectedID, session.ID)
+	}
+
+	// New format: session:window.pane
+	expectedName := "session1:0.1"
+	if session.Name != expectedName {
+		t.Errorf("Expected Name %s, got %s", expectedName, session.Name)
 	}
 
 	if session.ServerName != "server1" {
