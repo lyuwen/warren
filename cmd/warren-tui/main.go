@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,9 +29,18 @@ func main() {
 	}
 	defer warren.Stop()
 
-	// TODO: Add some example sessions for testing
-	// In production, this would discover sessions automatically
-	// For now, users need to manually register sessions via CLI
+	// Discover and register agent sessions
+	if err := discoverAndRegisterSessions(warren); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to discover sessions: %v\n", err)
+	}
+
+	// Start Warren monitoring if sessions found
+	if len(warren.GetAllSessions()) > 0 {
+		if err := warren.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to start Warren: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	// Create TUI model
 	model := tui.NewModel(warren)
@@ -41,4 +51,42 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// discoverAndRegisterSessions discovers tmux sessions and registers them with Warren
+func discoverAndRegisterSessions(warren *core.Warren) error {
+	// Create tmux client for discovery
+	tmuxClient := warren.GetTmuxClient()
+
+	// Use the discovery service to find agent sessions
+	discoveryService := core.NewAgentDiscovery(tmuxClient)
+
+	// Get topology (use "localhost" as server name)
+	topology, err := tmuxClient.DiscoverTopology("localhost")
+	if err != nil {
+		return fmt.Errorf("failed to discover topology: %w", err)
+	}
+
+	// Discover all agent sessions
+	results, err := discoveryService.DiscoverAll(topology, 0.7)
+	if err != nil {
+		return fmt.Errorf("failed to discover sessions: %w", err)
+	}
+
+	if len(results) == 0 {
+		log.Println("No agent sessions discovered")
+		return nil
+	}
+
+	// Register each discovered session
+	for _, result := range results {
+		session := result.ToAgentSession()
+		if err := warren.AddSession(session.ID, session.TmuxPaneID); err != nil {
+			log.Printf("Warning: Failed to register session %s: %v", session.ID, err)
+			continue
+		}
+		log.Printf("Registered agent session: %s (pane: %s, type: %s)", session.ID, session.TmuxPaneID, session.AgentType)
+	}
+
+	return nil
 }
