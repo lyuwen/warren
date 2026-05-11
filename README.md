@@ -4,18 +4,32 @@ Warren is a central hub for supervising and interacting with distributed coding-
 
 ## Project Status
 
-**Phase 1 Implementation Complete** - The tmux interface layer has been validated and is ready for use.
+**Phase 2 Implementation Complete** - Warren now provides a complete monitoring solution with TUI and web interfaces for observing agent sessions in real-time.
+
+### What's New in Phase 2
+
+- ✅ **Event Store** - SQLite-based event storage for activity tracking
+- ✅ **Activity Parser** - Extracts chat, file operations, and tool usage from agent output
+- ✅ **State Detection** - Infers agent state (idle, thinking, waiting, error, etc.)
+- ✅ **Artifact Profiles** - Tracks files touched and repositories accessed
+- ✅ **Notification Engine** - Alerts on actionable states (permission required, questions, errors)
+- ✅ **Terminal UI** - Keyboard-driven interface with Bubble Tea
+- ✅ **Web Interface** - Real-time web dashboard with WebSocket updates
 
 ## Quick Start
 
 ### Build
 
 ```bash
+# Build all binaries
 go build -o warren ./cmd/warren
+go build -o warren-tui ./cmd/warren-tui
+go build -o warren-web ./cmd/warren-web
 ```
 
 ### Usage
 
+**Phase 1 - Tmux Interface:**
 ```bash
 # Discover tmux topology
 ./warren topology
@@ -25,10 +39,24 @@ go build -o warren ./cmd/warren
 
 # Send text to a pane
 ./warren send <pane-id> "your text here"
-
-# Test control loop
-./warren test-loop <pane-id>
 ```
+
+**Phase 2 - Monitoring:**
+```bash
+# Start Terminal UI
+./warren-tui
+
+# Start Web Interface (localhost:8080)
+./warren-web
+```
+
+The TUI provides keyboard-driven navigation:
+- ↑/↓: Navigate sessions
+- Enter: View details
+- n: Notifications
+- q: Quit
+
+The web interface provides real-time updates at http://localhost:8080
 
 ## Phase 1 Implementation
 
@@ -69,26 +97,74 @@ Phase 1 validates the tmux interface model. The following components are impleme
 ```
 warren/
 ├── cmd/
-│   └── warren/          # CLI tool for Phase 1 testing
+│   ├── warren/              # CLI tool for Phase 1 testing
+│   ├── warren-tui/          # Terminal UI (Phase 2)
+│   └── warren-web/          # Web interface (Phase 2)
 ├── internal/
-│   ├── core/            # Server model and registry
-│   └── tmux/            # Tmux interface layer
-│       ├── executor.go      # Command execution (local/remote)
-│       ├── topology.go      # Topology discovery
-│       ├── capture.go       # Pane content capture
-│       ├── control.go       # Pane control (send text/keys)
-│       └── control_loop.go  # High-level control workflows
+│   ├── core/                # Server model, agent sessions, artifact profiles
+│   ├── events/              # Event store (SQLite)
+│   ├── notifications/       # Notification engine
+│   ├── parser/              # Activity parser
+│   ├── state/               # State detection
+│   ├── tmux/                # Tmux interface layer
+│   ├── tui/                 # Terminal UI (Bubble Tea)
+│   ├── types/               # Shared types (AgentState)
+│   └── web/                 # Web server and API
 └── docs/
-    ├── CLAUDE.md        # Project guide
-    ├── design-review.md # Design specification
-    └── ROADMAP.md       # Implementation roadmap
+    ├── CLAUDE.md            # Project guide
+    ├── design-review.md     # Design specification
+    ├── ROADMAP.md           # Implementation roadmap
+    ├── phase2-status.md     # Phase 2 completion report
+    └── security.md          # Security documentation
 ```
+
+## Phase 2 Components
+
+### Event Store (`internal/events/`)
+- SQLite-based immutable event log
+- Stores agent activity, state changes, and notifications
+- Efficient querying by agent, time range, and event type
+
+### Activity Parser (`internal/parser/`)
+- Extracts structured data from agent output
+- Detects chat messages, file operations, tool usage
+- Identifies permission prompts and questions
+
+### State Detection (`internal/state/`)
+- Infers agent state from activity patterns
+- States: idle, thinking, executing, waiting_permission, asking_question, finished, error, stopped
+- Priority-based resolution for conflicting signals
+
+### Artifact Profiles (`internal/core/`)
+- Tracks files visited and edited by each agent
+- Detects Git repositories automatically
+- Provides statistics (reads, edits, writes)
+
+### Notification Engine (`internal/notifications/`)
+- Triggers on actionable states
+- Immutable event pattern for consumption tracking
+- Real-time notification channel
+
+### Terminal UI (`internal/tui/`)
+- Built with Bubble Tea framework
+- Three views: session list, agent detail, notifications
+- Keyboard-driven navigation
+- Real-time updates (500ms polling)
+
+### Web Interface (`internal/web/`)
+- REST API with 5 endpoints
+- WebSocket for real-time updates
+- Responsive HTML/CSS/JavaScript frontend
+- Localhost-only security (CORS validated)
 
 ## Testing
 
 ```bash
-# Run unit tests
+# Run all tests
 go test ./...
+
+# Run tests with coverage
+go test -cover ./...
 
 # Run integration tests (requires tmux)
 go test -v ./internal/tmux/...
@@ -96,6 +172,46 @@ go test -v ./internal/tmux/...
 # Run only unit tests (skip integration)
 go test -short ./...
 ```
+
+**Test Coverage:** 130+ tests across all packages
+
+## Security
+
+Warren is designed for **localhost-only deployment**. The web interface has no authentication and should never be exposed to a network.
+
+See `docs/security.md` for detailed security documentation.
+
+**Safe deployment:**
+```bash
+warren-web --bind 127.0.0.1:8080
+```
+
+**UNSAFE - Do not expose to network:**
+```bash
+warren-web --bind 0.0.0.0:8080  # DO NOT USE
+```
+
+## Next Steps
+
+Phase 2 is complete. Future work (Phase 3+) will focus on:
+
+- **Network Deployment Support**
+  - Authentication & authorization
+  - HTTPS/TLS support
+  - CSRF protection
+  - Rate limiting
+
+- **Enhanced Monitoring**
+  - Historical state tracking
+  - Performance metrics
+  - Custom alert rules
+
+- **Multi-Server Support**
+  - Remote server monitoring via SSH
+  - Distributed deployment
+  - Cross-server session management
+
+See `ROADMAP.md` for detailed planning.
 
 ## Phase 1 Validation Results
 

@@ -61,6 +61,8 @@ This roadmap breaks the design into concrete implementation tasks with clear suc
 
 **Success criteria:** User can open Warren and see all agent sessions, their current state, recent activity, and which ones need attention.
 
+**Status:** ✅ **COMPLETE**
+
 ### Tasks
 
 #### 2.1 Agent Session Registry
@@ -96,39 +98,49 @@ This roadmap breaks the design into concrete implementation tasks with clear suc
 - [x] Test: detect state from real session captures
 
 #### 2.5 Artifact Profile Extraction
-- [ ] Define `ArtifactProfile` entity (repo roots, files visited, files edited)
-- [ ] Extract artifact interactions from activity events
-- [ ] Build cumulative artifact profile per agent session
-- [ ] Test: track files touched by an agent over time
+- [x] Define `ArtifactProfile` entity (repo roots, files visited, files edited)
+- [x] Extract artifact interactions from activity events
+- [x] Build cumulative artifact profile per agent session
+- [x] Detect Git repositories automatically (.git directories)
+- [x] Track read/edit/write statistics
+- [x] Test: track files touched by an agent over time
 
 #### 2.6 Notification Engine
 - [x] Define notification triggers (permission required, question asked, finished, error, stopped)
-- [x] Emit `NotificationEvent` on state transitions - schema exists
+- [x] Emit `NotificationEvent` on state transitions
 - [x] Store notifications in event DB
-- [ ] Implement notification service that watches state changes
-- [ ] Mark notifications as consumed when user acts on them
-- [ ] Test: generate notifications from state changes
+- [x] Implement notification service that watches state changes
+- [x] Mark notifications as consumed when user acts on them
+- [x] Real-time notification channel for live updates
+- [x] Test: generate notifications from state changes
 
 #### 2.7 Basic TUI (Read-Only)
-- [ ] Choose TUI framework (Bubble Tea, tview, or similar)
-- [ ] Implement server list view
-- [ ] Implement agent session list view (grouped by server)
-- [ ] Implement agent detail view (state, recent chat, files touched, artifact profile)
-- [ ] Implement notification inbox view
-- [ ] Add keyboard navigation
-- [ ] Test: browse sessions and notifications in TUI
+- [x] Choose TUI framework (Bubble Tea)
+- [x] Implement server list view
+- [x] Implement agent session list view (grouped by server, color-coded by state)
+- [x] Implement agent detail view (state, recent chat, files touched, artifact profile)
+- [x] Implement notification inbox view
+- [x] Add keyboard navigation (arrows, enter, tab, esc, q)
+- [x] Real-time updates (500ms polling)
+- [x] Test: browse sessions and notifications in TUI
 
 #### 2.8 Basic Web Interface (Read-Only)
-- [ ] Choose web framework (Go stdlib http, Gin, or similar)
-- [ ] Implement REST API or WebSocket for core queries
-- [ ] Implement server list page
-- [ ] Implement agent session list page
-- [ ] Implement agent detail page
-- [ ] Implement notification inbox page
-- [ ] Add responsive layout for mobile
-- [ ] Test: browse sessions and notifications in browser
+- [x] Choose web framework (Go stdlib http + Gorilla WebSocket)
+- [x] Implement REST API (5 endpoints)
+- [x] Implement WebSocket for real-time updates
+- [x] Implement server list page
+- [x] Implement agent session list page
+- [x] Implement agent detail page
+- [x] Implement notification inbox page
+- [x] Add responsive layout for mobile
+- [x] Localhost-only security (CORS validation)
+- [x] Test: browse sessions and notifications in browser
 
-**Phase 2 Success:** User can see all agent sessions, understand what each is doing, and identify which ones need attention — all without SSHing or attaching to tmux.
+**Phase 2 Success:** ✅ User can see all agent sessions, understand what each is doing, and identify which ones need attention — all without SSHing or attaching to tmux.
+
+**Test Coverage:** 130+ tests passing across all packages
+
+**Documentation:** Complete (README, ROADMAP, phase2-status.md, security.md)
 
 ---
 
