@@ -192,8 +192,9 @@ func (r *DiscoveryResult) ToAgentSession() *AgentSession {
 	// Extract pane number from pane ID (e.g., "%2" -> "2")
 	paneNum := strings.TrimPrefix(r.TmuxPaneID, "%")
 
-	// Create human-readable name: session:window.pane
-	humanName := fmt.Sprintf("%s:%d.%s", r.TmuxSessionName, r.TmuxWindowIndex, paneNum)
+	// Create human-readable name: hostname/session:window.pane
+	// Include hostname for multi-server clarity
+	humanName := fmt.Sprintf("%s/%s:%d.%s", r.ServerName, r.TmuxSessionName, r.TmuxWindowIndex, paneNum)
 
 	return &AgentSession{
 		ID:              GenerateSessionID(r),

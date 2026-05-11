@@ -175,8 +175,8 @@ func TestDiscoveryResult_ToAgentSession(t *testing.T) {
 		t.Errorf("Expected ID %s, got %s", expectedID, session.ID)
 	}
 
-	// New format: session:window.pane
-	expectedName := "session1:0.1"
+	// New format with hostname: hostname/session:window.pane
+	expectedName := "server1/session1:0.1"
 	if session.Name != expectedName {
 		t.Errorf("Expected Name %s, got %s", expectedName, session.Name)
 	}
