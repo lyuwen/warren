@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Warren - Agent Monitor</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 Warren</h1>
+            <p class="subtitle">Agent Session Monitor</p>
+            <div class="connection-status">
+                <span id="ws-status" class="status-dot offline"></span>
+                <span id="ws-status-text">Connecting...</span>
+            </div>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab active" data-view="agents">Agents</button>
+            <button class="tab" data-view="notifications">Notifications <span id="notif-badge" class="badge hidden">0</span></button>
+            <button class="tab" data-view="servers">Servers</button>
+        </nav>
+
+        <main>
+            <!-- Agents View -->
+            <div id="agents-view" class="view active">
+                <div class="view-header">
+                    <h2>Agent Sessions</h2>
+                    <button id="refresh-agents" class="btn-secondary">Refresh</button>
+                </div>
+                <div id="agents-list" class="agents-grid">
+                    <div class="loading">Loading agents...</div>
+                </div>
+            </div>
+
+            <!-- Agent Detail View -->
+            <div id="agent-detail-view" class="view">
+                <div class="view-header">
+                    <button id="back-to-agents" class="btn-secondary">← Back</button>
+                    <h2 id="agent-detail-title">Agent Details</h2>
+                </div>
+                <div id="agent-detail-content">
+                    <div class="loading">Loading...</div>
+                </div>
+            </div>
+
+            <!-- Notifications View -->
+            <div id="notifications-view" class="view">
+                <div class="view-header">
+                    <h2>Notifications</h2>
+                    <button id="refresh-notifications" class="btn-secondary">Refresh</button>
+                </div>
+                <div id="notifications-list">
+                    <div class="loading">Loading notifications...</div>
+                </div>
+            </div>
+
+            <!-- Servers View -->
+            <div id="servers-view" class="view">
+                <div class="view-header">
+                    <h2>Servers</h2>
+                    <button id="refresh-servers" class="btn-secondary">Refresh</button>
+                </div>
+                <div id="servers-list">
+                    <div class="loading">Loading servers...</div>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>Warren v0.1.0 | Last updated: <span id="last-update">Never</span></p>
+        </footer>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>
