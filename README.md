@@ -213,6 +213,21 @@ Phase 2 is complete. Future work (Phase 3+) will focus on:
 
 See `ROADMAP.md` for detailed planning.
 
+## Known Limitations
+
+**Phase 2 Limitations:**
+
+- **Agent Session Persistence**: Agent sessions are stored in-memory only and are lost on Warren restart. Sessions must be re-discovered each time Warren starts. (Planned for Phase 2.1)
+
+- **Multi-Server Discovery**: Multi-server agent discovery has not been tested at scale. Current validation covers localhost only. (Planned for Phase 3)
+
+- **E2E Test Coverage**: The following components have not been validated in end-to-end testing:
+  - TUI interface (manual testing required)
+  - WebSocket real-time updates (REST API validated)
+  - Artifact profile detail views (activity tracking validated)
+
+These limitations do not affect core Phase 2 functionality: users can see all agent sessions, their states, and recent activity without SSHing to tmux.
+
 ## Phase 1 Validation Results
 
 ✅ **Server Model**: Local server detection and registry persistence working
