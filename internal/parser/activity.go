@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -60,6 +61,8 @@ func NewActivityParser() *ActivityParser {
 			regexp.MustCompile(`(?m)^Do you want .*\?$`),
 			regexp.MustCompile(`(?m)^How should I .*\?$`),
 			regexp.MustCompile(`(?m)^Which .*would you prefer\?$`),
+			// Multiple choice patterns (numbered options)
+			regexp.MustCompile(`(?m)^\d+\.\s+.+$`), // "1. Option A"
 		},
 	}
 }
@@ -253,16 +256,50 @@ func (p *ActivityParser) parsePrompts(agentID string, content string, timestamp 
 	// Only detect questions that appear at the END of content (last non-empty lines)
 	lines := strings.Split(content, "\n")
 
-	// Get last 5 non-empty lines (where real questions appear)
+	// Get last 10 non-empty lines (where real questions and multiple choice appear)
 	lastLines := []string{}
-	for i := len(lines) - 1; i >= 0 && len(lastLines) < 5; i-- {
+	for i := len(lines) - 1; i >= 0 && len(lastLines) < 10; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line != "" {
 			lastLines = append([]string{line}, lastLines...)
 		}
 	}
 
-	// Check if any of the last lines match question patterns
+	// Check for multiple choice questions (numbered options)
+	// Look for pattern: multiple consecutive lines starting with "1.", "2.", "3."
+	multipleChoiceCount := 0
+	for _, line := range lastLines {
+		if regexp.MustCompile(`^\d+\.\s+.+$`).MatchString(line) {
+			multipleChoiceCount++
+		}
+	}
+
+	// If we have 2+ numbered options, it's a multiple choice question
+	if multipleChoiceCount >= 2 {
+		// Collect all the options
+		optionsText := []string{}
+		for _, line := range lastLines {
+			if regexp.MustCompile(`^\d+\.\s+.+$`).MatchString(line) {
+				optionsText = append(optionsText, line)
+			}
+		}
+
+		activity := &events.AgentActivityEvent{
+			AgentID:      agentID,
+			ActivityType: "prompt",
+			Content:      strings.Join(optionsText, "\n"),
+			Metadata: map[string]string{
+				"prompt_type":    "question",
+				"question_type":  "multiple_choice",
+				"option_count":   fmt.Sprintf("%d", multipleChoiceCount),
+			},
+			Timestamp: timestamp,
+		}
+		activities = append(activities, activity)
+		return activities // Return early, we found a multiple choice question
+	}
+
+	// Check if any of the last lines match question patterns (for "?" questions)
 	for _, line := range lastLines {
 		// Skip lines that are clearly not questions to user
 		if strings.HasPrefix(line, "//") || // Code comments
