@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -14,7 +15,35 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for now
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			// Same-origin request (no Origin header)
+			return true
+		}
+
+		// Parse origin URL
+		u, err := url.Parse(origin)
+		if err != nil {
+			log.Printf("Invalid origin URL: %v", err)
+			return false
+		}
+
+		// Only allow localhost origins
+		allowedHosts := []string{
+			"localhost:8080",
+			"127.0.0.1:8080",
+			"localhost",
+			"127.0.0.1",
+		}
+
+		for _, host := range allowedHosts {
+			if u.Host == host {
+				return true
+			}
+		}
+
+		log.Printf("Rejected WebSocket connection from origin: %s", origin)
+		return false
 	},
 }
 
