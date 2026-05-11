@@ -325,3 +325,8 @@ func (w *Warren) GetEventStore() *events.Store {
 func (w *Warren) GetNotificationEngine() *notifications.Engine {
 	return w.notifEngine
 }
+
+// GetTmuxClient returns the tmux client
+func (w *Warren) GetTmuxClient() *tmux.Client {
+	return w.tmuxClient
+}
