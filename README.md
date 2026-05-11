@@ -22,6 +22,9 @@ Warren is a central hub for supervising and interacting with distributed coding-
 
 ```bash
 # Build all binaries
+make
+
+# Or manually with go
 go build -o warren ./cmd/warren
 go build -o warren-tui ./cmd/warren-tui
 go build -o warren-web ./cmd/warren-web
@@ -33,13 +36,15 @@ go build -o warren-web ./cmd/warren-web
 
 **Start Web Interface (Recommended):**
 ```bash
-./warren-web -addr :8080
+make run-web
+# Or: ./warren-web -addr :8080
 # Open browser: http://localhost:8080
 ```
 
 **Start Terminal UI:**
 ```bash
-./warren-tui
+make run-tui
+# Or: ./warren-tui
 # Navigate with ↑/↓, Enter, Tab, q
 ```
 
@@ -55,15 +60,6 @@ go build -o warren-web ./cmd/warren-web
 
 # Send text to a pane
 ./warren send <pane-id> "your text here"
-```
-
-**Phase 2 - Monitoring:**
-```bash
-# Start Terminal UI
-./warren-tui
-
-# Start Web Interface (localhost:8080)
-./warren-web
 ```
 
 The TUI provides keyboard-driven navigation:
