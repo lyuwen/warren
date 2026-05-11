@@ -14,6 +14,13 @@ func main() {
 	config := core.DefaultConfig()
 	config.DBPath = os.ExpandEnv("$HOME/.warren/warren.db")
 
+	// Ensure .warren directory exists
+	warrenDir := os.ExpandEnv("$HOME/.warren")
+	if err := os.MkdirAll(warrenDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create Warren directory: %v\n", err)
+		os.Exit(1)
+	}
+
 	warren, err := core.NewWarren(config)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create Warren: %v\n", err)
