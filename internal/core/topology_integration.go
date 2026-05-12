@@ -36,8 +36,13 @@ func (w *Warren) GetSession(agentID string) (*AgentSession, error) {
 
 // GetServer retrieves a server by name
 func (w *Warren) GetServer(serverName string) (*Server, error) {
+	// Try registry first
 	if w.serverRegistry != nil {
-		return w.serverRegistry.Get(serverName)
+		server, err := w.serverRegistry.Get(serverName)
+		if err == nil {
+			return server, nil
+		}
+		// If not found in registry, fall through to default
 	}
 
 	// Fallback: return localhost server
