@@ -235,70 +235,91 @@ class WarrenApp {
             const container = document.getElementById('agent-detail-content');
 
             container.innerHTML = `
-                <div class="agent-detail-grid">
-                    <div class="detail-section">
-                        <h3>Session Info</h3>
-                        <div class="detail-item">
-                            <span class="detail-label">Agent ID:</span>
-                            <span class="detail-value">${agent.id}</span>
-                        </div>
-                        <div class="detail-item">
-                            <span class="detail-label">Pane ID:</span>
-                            <span class="detail-value">${agent.pane_id}</span>
-                        </div>
-                        <div class="detail-item">
-                            <span class="detail-label">State:</span>
-                            <span class="state-badge state-${agent.state}">${agent.state.replace('_', ' ')}</span>
-                        </div>
-                        <div class="detail-item">
-                            <span class="detail-label">Last Poll:</span>
-                            <span class="detail-value">${this.formatTime(agent.last_poll)}</span>
-                        </div>
-                        <div class="detail-item">
-                            <span class="detail-label">Error Count:</span>
-                            <span class="detail-value">${agent.error_count}</span>
-                        </div>
-                    </div>
-
-                    <div class="detail-section">
-                        <h3>Artifact Profile</h3>
-                        ${agent.profile ? `
-                            <div class="detail-item">
-                                <span class="detail-label">Files Visited:</span>
-                                <span class="detail-value">${agent.profile.files_visited ? agent.profile.files_visited.length : 0}</span>
-                            </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Total Reads:</span>
-                                <span class="detail-value">${agent.profile.total_reads || 0}</span>
-                            </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Total Writes:</span>
-                                <span class="detail-value">${agent.profile.total_writes || 0}</span>
-                            </div>
-                            <div class="detail-item">
-                                <span class="detail-label">Repos:</span>
-                                <span class="detail-value">${agent.profile.repos_touched ? agent.profile.repos_touched.length : 0}</span>
-                            </div>
-                        ` : '<p>No artifact profile available</p>'}
-                    </div>
+                <div class="agent-detail-tabs">
+                    <button class="detail-tab active" data-tab="info">Info</button>
+                    <button class="detail-tab" data-tab="conversation">Conversation</button>
                 </div>
 
-                <div class="detail-section">
-                    <h3>Recent Activities</h3>
-                    <div class="activity-list">
-                        ${agent.activities && agent.activities.length > 0 ?
-                            agent.activities.map(activity => `
-                                <div class="activity-item ${activity.activity_type}">
-                                    <div class="activity-type">${activity.activity_type}</div>
-                                    <div class="activity-content">${this.escapeHtml(activity.content)}</div>
-                                    <div class="activity-time">${this.formatTime(activity.timestamp)}</div>
+                <div class="agent-detail-tab-content">
+                    <div id="info-tab" class="tab-pane active">
+                        <div class="agent-detail-grid">
+                            <div class="detail-section">
+                                <h3>Session Info</h3>
+                                <div class="detail-item">
+                                    <span class="detail-label">Agent ID:</span>
+                                    <span class="detail-value">${agent.id}</span>
                                 </div>
-                            `).join('') :
-                            '<p>No recent activities</p>'
-                        }
+                                <div class="detail-item">
+                                    <span class="detail-label">Pane ID:</span>
+                                    <span class="detail-value">${agent.pane_id}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">State:</span>
+                                    <span class="state-badge state-${agent.state}">${agent.state.replace('_', ' ')}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Last Poll:</span>
+                                    <span class="detail-value">${this.formatTime(agent.last_poll)}</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Error Count:</span>
+                                    <span class="detail-value">${agent.error_count}</span>
+                                </div>
+                            </div>
+
+                            <div class="detail-section">
+                                <h3>Artifact Profile</h3>
+                                ${agent.profile ? `
+                                    <div class="detail-item">
+                                        <span class="detail-label">Files Visited:</span>
+                                        <span class="detail-value">${agent.profile.files_visited ? agent.profile.files_visited.length : 0}</span>
+                                    </div>
+                                    <div class="detail-item">
+                                        <span class="detail-label">Total Reads:</span>
+                                        <span class="detail-value">${agent.profile.total_reads || 0}</span>
+                                    </div>
+                                    <div class="detail-item">
+                                        <span class="detail-label">Total Writes:</span>
+                                        <span class="detail-value">${agent.profile.total_writes || 0}</span>
+                                    </div>
+                                    <div class="detail-item">
+                                        <span class="detail-label">Repos:</span>
+                                        <span class="detail-value">${agent.profile.repos_touched ? agent.profile.repos_touched.length : 0}</span>
+                                    </div>
+                                ` : '<p>No artifact profile available</p>'}
+                            </div>
+                        </div>
+
+                        <div class="detail-section">
+                            <h3>Recent Activities</h3>
+                            <div class="activity-list">
+                                ${agent.activities && agent.activities.length > 0 ?
+                                    agent.activities.map(activity => `
+                                        <div class="activity-item ${activity.activity_type}">
+                                            <div class="activity-type">${activity.activity_type}</div>
+                                            <div class="activity-content">${this.escapeHtml(activity.content)}</div>
+                                            <div class="activity-time">${this.formatTime(activity.timestamp)}</div>
+                                        </div>
+                                    `).join('') :
+                                    '<p>No recent activities</p>'
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="conversation-tab" class="tab-pane">
+                        <div class="loading">Loading conversation...</div>
                     </div>
                 </div>
             `;
+
+            // Setup tab switching
+            container.querySelectorAll('.detail-tab').forEach(tab => {
+                tab.addEventListener('click', (e) => {
+                    const tabName = e.target.dataset.tab;
+                    this.switchAgentTab(tabName, agentId);
+                });
+            });
 
             this.updateLastUpdate();
         } catch (error) {
@@ -310,6 +331,108 @@ class WarrenApp {
                 </div>
             `;
         }
+    }
+
+    switchAgentTab(tabName, agentId) {
+        // Update tab buttons
+        document.querySelectorAll('.detail-tab').forEach(tab => {
+            tab.classList.toggle('active', tab.dataset.tab === tabName);
+        });
+
+        // Update tab panes
+        document.querySelectorAll('.tab-pane').forEach(pane => {
+            pane.classList.remove('active');
+        });
+        document.getElementById(`${tabName}-tab`).classList.add('active');
+
+        // Load conversation if switching to conversation tab
+        if (tabName === 'conversation') {
+            this.loadConversation(agentId);
+        }
+    }
+
+    async loadConversation(agentId) {
+        const container = document.getElementById('conversation-tab');
+        container.innerHTML = '<div class="loading">Loading conversation...</div>';
+
+        try {
+            const response = await fetch(`/api/conversation/${agentId}?limit=50`);
+            const data = await response.json();
+
+            if (data.status === 'pending_integration') {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">💬</div>
+                        <h3>Conversation History</h3>
+                        <p>${data.message}</p>
+                        <p class="text-muted">This feature will be available once Warren has full topology tracking.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            if (!data.messages || data.messages.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">💬</div>
+                        <p>No conversation history yet</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // Render messages
+            container.innerHTML = `
+                <div class="conversation-container">
+                    <div class="conversation-header">
+                        <h3>Conversation History</h3>
+                        <span class="message-count">${data.total} messages</span>
+                    </div>
+                    <div class="conversation-messages">
+                        ${data.messages.map(msg => this.renderMessage(msg)).join('')}
+                    </div>
+                </div>
+            `;
+
+            // Auto-scroll to bottom
+            const messagesContainer = container.querySelector('.conversation-messages');
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+        } catch (error) {
+            console.error('Failed to load conversation:', error);
+            container.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">⚠️</div>
+                    <p>Failed to load conversation history</p>
+                </div>
+            `;
+        }
+    }
+
+    renderMessage(msg) {
+        const timestamp = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : '';
+        const role = msg.role || 'unknown';
+        const content = this.escapeHtml(msg.content || '');
+
+        let toolCallsHtml = '';
+        if (msg.tool_calls && msg.tool_calls.length > 0) {
+            toolCallsHtml = msg.tool_calls.map(tool => `
+                <div class="tool-call">
+                    <span class="tool-name">🔧 ${tool.name}</span>
+                </div>
+            `).join('');
+        }
+
+        return `
+            <div class="message message-${role}">
+                <div class="message-header">
+                    <span class="message-role">${role === 'user' ? 'User' : 'Assistant'}</span>
+                    <span class="message-time">${timestamp}</span>
+                </div>
+                <div class="message-content">${content}</div>
+                ${toolCallsHtml}
+            </div>
+        `;
     }
 
     async loadNotifications() {

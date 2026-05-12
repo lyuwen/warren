@@ -141,7 +141,7 @@ func (m Model) renderAgentDetail() string {
 	b.WriteString("\n")
 
 	// Help text
-	help := helpStyle.Render("←/esc: back • q: quit")
+	help := helpStyle.Render("c: conversation • ←/esc: back • q: quit")
 	b.WriteString(help)
 
 	return borderStyle.Render(b.String())
@@ -173,6 +173,96 @@ func (m Model) renderNotifications() string {
 
 	// Help text
 	help := helpStyle.Render("←/esc: back • q: quit")
+	b.WriteString(help)
+
+	return borderStyle.Render(b.String())
+}
+
+// renderConversation renders the conversation history view
+func (m Model) renderConversation() string {
+	var b strings.Builder
+
+	if m.selectedAgentID == "" {
+		return borderStyle.Render("No agent selected")
+	}
+
+	// Title
+	title := titleStyle.Render(fmt.Sprintf("Conversation: %s", m.selectedAgentID))
+	b.WriteString(title)
+	b.WriteString("\n\n")
+
+	// Check for errors
+	if m.conversationError != "" {
+		b.WriteString(errorStyle.Render(m.conversationError))
+		b.WriteString("\n\n")
+		b.WriteString(normalItemStyle.Render("Conversation history not available (using tmux capture)"))
+		b.WriteString("\n\n")
+		help := helpStyle.Render("←/esc: back • q: quit")
+		b.WriteString(help)
+		return borderStyle.Render(b.String())
+	}
+
+	// Display messages
+	if len(m.conversationMessages) == 0 {
+		b.WriteString(normalItemStyle.Render("No conversation history yet"))
+		b.WriteString("\n")
+	} else {
+		// Calculate visible window
+		visibleHeight := m.height - 10 // Reserve space for title, help, borders
+		startIdx := m.conversationScroll
+		endIdx := startIdx + visibleHeight
+		if endIdx > len(m.conversationMessages) {
+			endIdx = len(m.conversationMessages)
+		}
+
+		// Render visible messages
+		for i := startIdx; i < endIdx; i++ {
+			msg := m.conversationMessages[i]
+
+			// Format timestamp
+			timestamp := msg.Timestamp.Format("15:04:05")
+
+			// Render based on role
+			switch msg.Role {
+			case "user":
+				b.WriteString(userMessageStyle.Render(fmt.Sprintf("[%s] User:", timestamp)))
+				b.WriteString("\n")
+				b.WriteString(normalItemStyle.Render(fmt.Sprintf("  %s", msg.Content)))
+				b.WriteString("\n")
+
+			case "assistant":
+				b.WriteString(assistantMessageStyle.Render(fmt.Sprintf("[%s] Assistant:", timestamp)))
+				b.WriteString("\n")
+
+				// Show content if available
+				if msg.Content != "" {
+					b.WriteString(normalItemStyle.Render(fmt.Sprintf("  %s", msg.Content)))
+					b.WriteString("\n")
+				}
+
+				// Show tool calls
+				for _, toolCall := range msg.ToolCalls {
+					b.WriteString(toolCallStyle.Render(fmt.Sprintf("  [Tool: %s]", toolCall.Name)))
+					b.WriteString("\n")
+				}
+			}
+
+			b.WriteString("\n")
+		}
+
+		// Scroll indicator
+		if len(m.conversationMessages) > visibleHeight {
+			scrollInfo := fmt.Sprintf("Showing %d-%d of %d messages",
+				startIdx+1, endIdx, len(m.conversationMessages))
+			b.WriteString(helpStyle.Render(scrollInfo))
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("\n")
+
+	// Help text
+	help := helpStyle.Render("↑/↓: scroll • ←/esc: back • q: quit")
 	b.WriteString(help)
 
 	return borderStyle.Render(b.String())

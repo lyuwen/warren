@@ -71,6 +71,22 @@ var (
 				Background(colorRed).
 				Bold(true).
 				Padding(0, 1)
+
+	// Conversation message styles
+	userMessageStyle = lipgloss.NewStyle().
+				Foreground(colorBlue).
+				Bold(true)
+
+	assistantMessageStyle = lipgloss.NewStyle().
+				Foreground(colorWhite).
+				Bold(true)
+
+	toolCallStyle = lipgloss.NewStyle().
+			Foreground(colorYellow)
+
+	errorStyle = lipgloss.NewStyle().
+			Foreground(colorRed).
+			Bold(true)
 )
 
 // GetStateStyle returns the appropriate style for an agent state

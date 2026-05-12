@@ -5,6 +5,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/lfu/warren/internal/claude"
 	"github.com/lfu/warren/internal/core"
 )
 
@@ -14,32 +15,38 @@ type View int
 const (
 	ViewSessionList View = iota
 	ViewAgentDetail
+	ViewConversation
 	ViewNotifications
 )
 
 // Model is the main Bubble Tea model
 type Model struct {
-	warren          *core.Warren
-	currentView     View
-	sessionList     []string // List of agent IDs
-	selectedIndex   int
-	selectedAgentID string
-	notifications   []string
-	width           int
-	height          int
-	err             error
-	quitting        bool
+	warren               *core.Warren
+	conversationService  *core.ConversationService
+	currentView          View
+	sessionList          []string // List of agent IDs
+	selectedIndex        int
+	selectedAgentID      string
+	notifications        []string
+	conversationMessages []*claude.Message
+	conversationScroll   int
+	conversationError    string
+	width                int
+	height               int
+	err                  error
+	quitting             bool
 }
 
 // NewModel creates a new TUI model
 func NewModel(warren *core.Warren) Model {
 	return Model{
-		warren:        warren,
-		currentView:   ViewSessionList,
-		sessionList:   []string{},
-		selectedIndex: 0,
-		width:         80,
-		height:        24,
+		warren:              warren,
+		conversationService: core.NewConversationService(),
+		currentView:         ViewSessionList,
+		sessionList:         []string{},
+		selectedIndex:       0,
+		width:               80,
+		height:              24,
 	}
 }
 
@@ -92,17 +99,28 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case "up", "k":
-		if m.selectedIndex > 0 {
+		if m.currentView == ViewConversation {
+			if m.conversationScroll > 0 {
+				m.conversationScroll--
+			}
+		} else if m.selectedIndex > 0 {
 			m.selectedIndex--
 			m.updateSelectedAgent()
 		}
 		return m, nil
 
 	case "down", "j":
-		maxIndex := len(m.sessionList) - 1
-		if m.selectedIndex < maxIndex {
-			m.selectedIndex++
-			m.updateSelectedAgent()
+		if m.currentView == ViewConversation {
+			maxScroll := len(m.conversationMessages) - 1
+			if m.conversationScroll < maxScroll {
+				m.conversationScroll++
+			}
+		} else {
+			maxIndex := len(m.sessionList) - 1
+			if m.selectedIndex < maxIndex {
+				m.selectedIndex++
+				m.updateSelectedAgent()
+			}
 		}
 		return m, nil
 
@@ -112,8 +130,17 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "c":
+		if m.currentView == ViewAgentDetail && m.selectedAgentID != "" {
+			m.currentView = ViewConversation
+			m.loadConversation()
+		}
+		return m, nil
+
 	case "left", "h", "esc":
-		if m.currentView != ViewSessionList {
+		if m.currentView == ViewConversation {
+			m.currentView = ViewAgentDetail
+		} else if m.currentView != ViewSessionList {
 			m.currentView = ViewSessionList
 		}
 		return m, nil
@@ -124,7 +151,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "tab":
 		// Cycle through views
-		m.currentView = (m.currentView + 1) % 3
+		m.currentView = (m.currentView + 1) % 4
+		if m.currentView == ViewConversation && m.selectedAgentID != "" {
+			m.loadConversation()
+		}
 		return m, nil
 	}
 
@@ -167,6 +197,25 @@ func (m *Model) updateSelectedAgent() {
 	}
 }
 
+// loadConversation loads conversation history for the selected agent
+func (m *Model) loadConversation() {
+	if m.selectedAgentID == "" {
+		m.conversationError = "No agent selected"
+		return
+	}
+
+	// TODO: Integrate with Warren's session/server/pane tracking
+	// For now, show a placeholder message
+	// Once Warren has full topology tracking, we can:
+	// 1. Get AgentSession from Warren
+	// 2. Get Server info
+	// 3. Get Pane info
+	// 4. Call conversationService.GetRecentMessages(session, server, pane, 50)
+
+	m.conversationError = "Conversation history integration pending"
+	m.conversationMessages = nil
+}
+
 // View renders the current view
 func (m Model) View() string {
 	if m.quitting {
@@ -178,6 +227,8 @@ func (m Model) View() string {
 		return m.renderSessionList()
 	case ViewAgentDetail:
 		return m.renderAgentDetail()
+	case ViewConversation:
+		return m.renderConversation()
 	case ViewNotifications:
 		return m.renderNotifications()
 	default:
