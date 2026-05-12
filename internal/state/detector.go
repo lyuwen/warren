@@ -10,6 +10,32 @@ import (
 )
 
 // StateDetector infers agent state from activity events
+//
+// Design Decisions:
+//
+// 1. Idle Timeout (30 seconds):
+//    - Reduced from 5 minutes to 30 seconds for faster idle detection
+//    - Rationale: Claude Code agents typically respond within seconds. If no activity
+//      for 30s, the agent is likely waiting for input, not actively working.
+//    - Graduated strength: 0.7 at 30s, 0.8 at 1min, 0.9 at 2min+ for increasing confidence
+//    - Balances responsiveness (show idle quickly) vs false positives (brief pauses during work)
+//
+// 2. Time-Decay (100% → 50% → 20%):
+//    - Fresh signals (0-30s): 100% strength - recent activity is most relevant
+//    - Medium age (30s-2min): 50% strength - still relevant but fading
+//    - Old signals (>2min): 20% strength - historical context only
+//    - Prevents stale signals from dominating current state detection
+//
+// 3. Thread-Safety:
+//    - StateDetector is stateless except for the priority map (read-only after construction)
+//    - Safe for concurrent use by multiple goroutines
+//    - Signal structs are not mutated during detection (time-decay applied to copies)
+//    - Each detection call creates new Signal instances and result
+//
+// 4. Priority System:
+//    - Higher priority states (error, permission) override lower priority (idle, unknown)
+//    - Exception: Lower priority states with 2x confidence can override (prevents false positives)
+//    - Idle priority 35 (raised from 30) allows strong idle signals to beat weak thinking signals
 type StateDetector struct {
 	// State priority: higher priority states override lower priority ones
 	statePriority map[types.AgentState]int
@@ -26,7 +52,14 @@ func NewStateDetector() *StateDetector {
 			types.StateStopped:           60,
 			types.StateExecuting:         50,
 			types.StateThinking:          40,
-			types.StateIdle:              35, // Raised from 30 to reduce false positives
+			// Idle priority raised from 30 to 35 to reduce false positives.
+			// Previously, weak thinking signals (0.5 strength) from old assistant
+			// messages would override strong idle signals (0.7+ strength) due to
+			// priority alone. With priority 35 and the 2x confidence override rule,
+			// idle can now win when it has much stronger evidence (e.g., 0.7 vs 0.25
+			// after time-decay), preventing agents that are clearly idle from showing
+			// as "thinking" indefinitely.
+			types.StateIdle:              35,
 			types.StateUnknown:           10, // Lowest priority
 		},
 	}
@@ -343,21 +376,20 @@ func (d *StateDetector) determineState(signals []*Signal) (types.AgentState, flo
 
 	now := time.Now()
 
-	// Apply time-decay to signal strength
-	for _, signal := range signals {
-		age := now.Sub(signal.Timestamp)
-		if age > 2*time.Minute {
-			signal.Strength *= 0.2 // 20% strength after 2 minutes
-		} else if age > 30*time.Second {
-			signal.Strength *= 0.5 // 50% strength after 30 seconds
-		}
-		// else: 100% strength (0-30 seconds old)
-	}
-
-	// Group signals by state
+	// Group signals by state with time-decay applied
 	stateScores := make(map[types.AgentState]float64)
 	for _, signal := range signals {
-		stateScores[signal.State] += signal.Strength
+		// Calculate decayed strength without mutating the signal
+		decayedStrength := signal.Strength
+		age := now.Sub(signal.Timestamp)
+		if age > 2*time.Minute {
+			decayedStrength *= 0.2 // 20% strength after 2 minutes
+		} else if age > 30*time.Second {
+			decayedStrength *= 0.5 // 50% strength after 30 seconds
+		}
+		// else: 100% strength (0-30 seconds old)
+
+		stateScores[signal.State] += decayedStrength
 	}
 
 	// Find highest priority state with sufficient confidence

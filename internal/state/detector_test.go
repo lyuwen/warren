@@ -595,6 +595,40 @@ func TestStateDetector_IdlePriorityRaised(t *testing.T) {
 	}
 }
 
+// Test that demonstrates the false positive prevented by idle priority raise
+func TestStateDetector_IdlePriorityPreventsThinkingFalsePositive(t *testing.T) {
+	detector := NewStateDetector()
+
+	// Scenario: Agent finished responding 1 minute ago, now idle at prompt
+	// Without priority 35, thinking (priority 40, strength 0.25 after decay)
+	// would beat idle (priority 30, strength 0.8) due to priority alone
+	activities := []*events.AgentActivityEvent{
+		{
+			AgentID:      "test-agent",
+			ActivityType: "chat",
+			Content:      "Here's the implementation",
+			Metadata:     map[string]string{"role": "assistant"},
+			Timestamp:    time.Now().Add(-1 * time.Minute),
+		},
+	}
+
+	result := detector.DetectFromActivities(activities)
+
+	// With priority 35 and 2x confidence override:
+	// - Thinking: priority 40, strength 0.5 * 0.5 = 0.25 (after decay)
+	// - Idle: priority 35, strength 0.8
+	// Idle wins because 0.8 > 0.25 * 2.0 (0.5)
+	if result.State != types.StateIdle {
+		t.Errorf("False positive prevented: agent should be idle, not %s", result.State)
+		t.Errorf("This is the bug that priority 35 fixes - old thinking signals shouldn't override strong idle signals")
+	}
+
+	// Verify confidence is high
+	if result.Confidence < 0.7 {
+		t.Errorf("Expected high confidence for idle detection, got %.2f", result.Confidence)
+	}
+}
+
 // Integration test: idle agent should show idle within 5 seconds
 func TestStateDetector_Integration_IdleWithin5Seconds(t *testing.T) {
 	detector := NewStateDetector()
@@ -633,5 +667,70 @@ func TestStateDetector_OldQuestionSignalsDecay(t *testing.T) {
 	// Should detect idle (prompt suffix) over old question
 	if result.State != types.StateIdle {
 		t.Errorf("Expected StateIdle (prompt detected), got %s", result.State)
+	}
+}
+
+// Additional edge cases for question detection
+func TestStateDetector_QuestionDetectionEdgeCases(t *testing.T) {
+	detector := NewStateDetector()
+
+	tests := []struct {
+		name          string
+		content       string
+		expectedState types.AgentState
+		description   string
+	}{
+		{
+			name:          "URL with query params - not a question",
+			content:       "Fetching https://api.example.com/data?id=123&format=json\nExecuting request",
+			expectedState: types.StateExecuting,
+			description:   "Question mark in URL should not trigger question detection",
+		},
+		{
+			name:          "Markdown code block with question - not a question",
+			content:       "```python\n# Should we cache this?\ndef process():\n    pass\n```\nExecuting tests",
+			expectedState: types.StateExecuting,
+			description:   "Question in code block should be ignored",
+		},
+		{
+			name:          "Multiple questions with tool - high confidence",
+			content:       "I have a few questions:\n1. Should I proceed?\n2. Do you want me to continue?\nAskUserQuestion",
+			expectedState: types.StateAskingQuestion,
+			description:   "Multiple questions with tool should be detected",
+		},
+		{
+			name:          "Question in middle of long output - not detected",
+			content:       "Should I do this?\n\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nNow executing the command",
+			expectedState: types.StateExecuting,
+			description:   "Question not in last 3 lines should not be detected",
+		},
+		{
+			name:          "Exclamation as emphasis - not a question",
+			content:       "This is important!\nExecuting the task now",
+			expectedState: types.StateExecuting,
+			description:   "Exclamation marks should not trigger question detection",
+		},
+		{
+			name:          "Question with typo - still detected",
+			content:       "Should I procede with this?",
+			expectedState: types.StateAskingQuestion,
+			description:   "Question with typo in verb should still match 'should i' pattern",
+		},
+		{
+			name:          "Embedded question in sentence - detected",
+			content:       "I'm wondering: should I continue with this approach?",
+			expectedState: types.StateAskingQuestion,
+			description:   "Embedded question should be detected",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := detector.DetectFromContent(tt.content)
+
+			if result.State != tt.expectedState {
+				t.Errorf("%s: Expected state %s, got %s", tt.description, tt.expectedState, result.State)
+			}
+		})
 	}
 }

@@ -96,6 +96,14 @@ This roadmap breaks the design into concrete implementation tasks with clear suc
 - [x] Apply state priority rules when multiple signals present
 - [x] Emit state transition events
 - [x] Test: detect state from real session captures
+- [x] **Phase A Enhancement (2025-05-12)**: Enhanced idle detection, stricter question patterns, time-decay
+  - Added prompt detection ("> ", "$ " suffixes) for immediate idle recognition
+  - Reduced idle timeout from 5min to 30s with graduated strength (0.7-0.9)
+  - Implemented time-decay for signals (100% → 50% → 20% over 2min)
+  - Raised idle priority from 30 to 35 to prevent false "thinking" states
+  - Added 2x confidence override rule: lower-priority states with 2x confidence can win
+  - Stricter question detection: must be in last 3 lines + proper patterns + tool confirmation
+  - **Rationale for priority 35**: Prevents old thinking signals (0.5 base, 0.25 after decay) from overriding strong idle signals (0.7-0.9). With priority 30, thinking (priority 40) always won regardless of confidence. With priority 35 + 2x rule, idle can win when evidence is much stronger.
 
 #### 2.5 Artifact Profile Extraction
 - [x] Define `ArtifactProfile` entity (repo roots, files visited, files edited)
