@@ -81,10 +81,18 @@ func discoverAndRegisterSessions(warren *core.Warren) error {
 	// Register each discovered session
 	for _, result := range results {
 		session := result.ToAgentSession()
+
+		// Register in both the old sessions map and new registry
 		if err := warren.AddSession(session.ID, session.TmuxPaneID); err != nil {
 			log.Printf("Warning: Failed to register session %s: %v", session.ID, err)
 			continue
 		}
+
+		// Also register in the session registry for topology integration
+		if err := warren.RegisterAgentSession(session); err != nil {
+			log.Printf("Warning: Failed to register session in registry %s: %v", session.ID, err)
+		}
+
 		log.Printf("Registered agent session: %s (pane: %s, type: %s)", session.ID, session.TmuxPaneID, session.AgentType)
 	}
 

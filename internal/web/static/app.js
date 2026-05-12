@@ -413,16 +413,17 @@ class WarrenApp {
         const timestamp = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : '';
         const role = msg.type || 'unknown';
 
-        // Extract content from message.content array
+        // Extract content - API now returns simplified content field
         let content = '';
-        if (msg.message && msg.message.content && Array.isArray(msg.message.content)) {
-            // Extract text from content blocks
+        if (msg.content) {
+            // Use the simplified content field from API
+            content = msg.content;
+        } else if (msg.message && msg.message.content && Array.isArray(msg.message.content)) {
+            // Fallback: Extract text from raw message.content array
             content = msg.message.content
                 .filter(block => block.type === 'text' || block.text)
                 .map(block => block.text || block.thinking || '')
                 .join('\n');
-        } else if (msg.content) {
-            content = msg.content;
         }
 
         content = this.escapeHtml(content || '(no content)');
