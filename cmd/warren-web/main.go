@@ -27,6 +27,7 @@ func main() {
 		PollInterval:  *pollInterval,
 		MinConfidence: *minConfidence,
 		DBPath:        *dbPath,
+		ConfigDir:     ".warren",
 	}
 
 	warren, err := core.NewWarren(warrenConfig)
@@ -113,10 +114,18 @@ func discoverAndRegisterSessions(warren *core.Warren) error {
 	// Register each discovered session
 	for _, result := range results {
 		session := result.ToAgentSession()
+
+		// Register in both old and new systems for compatibility
 		if err := warren.AddSession(session.ID, session.TmuxPaneID); err != nil {
 			log.Printf("Warning: Failed to register session %s: %v", session.ID, err)
 			continue
 		}
+
+		// Also register in the new AgentSessionRegistry
+		if err := warren.RegisterAgentSession(session); err != nil {
+			log.Printf("Warning: Failed to register session in registry %s: %v", session.ID, err)
+		}
+
 		log.Printf("Registered agent session: %s (pane: %s, type: %s)", session.ID, session.TmuxPaneID, session.AgentType)
 	}
 

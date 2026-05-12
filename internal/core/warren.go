@@ -75,6 +75,11 @@ func NewWarren(config *Config) (*Warren, error) {
 		config = DefaultConfig()
 	}
 
+	// Set default ConfigDir if not provided
+	if config.ConfigDir == "" {
+		config.ConfigDir = ".warren"
+	}
+
 	// Initialize event store
 	eventStore, err := events.NewStore(config.DBPath)
 	if err != nil {
@@ -350,3 +355,4 @@ func (w *Warren) GetNotificationEngine() *notifications.Engine {
 func (w *Warren) GetTmuxClient() *tmux.Client {
 	return w.tmuxClient
 }
+
