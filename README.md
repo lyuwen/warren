@@ -10,11 +10,12 @@ Warren is a central hub for supervising and interacting with distributed coding-
 
 - ✅ **Event Store** - SQLite-based event storage for activity tracking
 - ✅ **Activity Parser** - Extracts chat, file operations, and tool usage from agent output
-- ✅ **State Detection** - Infers agent state (idle, thinking, waiting, error, etc.)
+- ✅ **State Detection** - Enhanced agent state inference (idle, thinking, waiting, error, etc.) with time-decay and improved question detection
+- ✅ **Conversation History** - Full conversation display from Claude Code sessions (TUI: press 'c', Web: Conversation tab)
 - ✅ **Artifact Profiles** - Tracks files touched and repositories accessed
 - ✅ **Notification Engine** - Alerts on actionable states (permission required, questions, errors)
-- ✅ **Terminal UI** - Keyboard-driven interface with Bubble Tea
-- ✅ **Web Interface** - Real-time web dashboard with WebSocket updates
+- ✅ **Terminal UI** - Keyboard-driven interface with Bubble Tea and conversation viewer
+- ✅ **Web Interface** - Real-time web dashboard with WebSocket updates and conversation display
 
 ## Quick Start
 
@@ -46,6 +47,7 @@ make run-web
 make run-tui
 # Or: ./warren-tui
 # Navigate with ↑/↓, Enter, Tab, q
+# Press 'c' to view conversation history for selected agent
 ```
 
 **See [Getting Started Guide](docs/getting-started.md) for detailed instructions.**
@@ -65,10 +67,13 @@ make run-tui
 The TUI provides keyboard-driven navigation:
 - ↑/↓: Navigate sessions
 - Enter: View details
+- c: View conversation history (from agent detail view)
 - n: Notifications
 - q: Quit
 
 The web interface provides real-time updates at http://localhost:8080
+- Click on any agent to view details
+- Switch to "Conversation" tab to see full conversation history
 
 ## Phase 1 Implementation
 

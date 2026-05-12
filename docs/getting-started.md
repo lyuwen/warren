@@ -62,6 +62,8 @@ The web interface provides a browser-based view of your agents.
 
 You'll see:
 - **Agents page**: List of all detected agents with states
+- **Agent details**: Click any agent to view detailed information
+- **Conversation tab**: View full conversation history from Claude Code sessions
 - **Notifications page**: Alerts for agents needing attention
 - **Servers page**: Overview of monitored servers
 
@@ -82,6 +84,8 @@ The TUI provides a terminal-based interface.
 **TUI Navigation:**
 - `↑/↓` - Navigate agent list
 - `Enter` - View agent details
+- `c` - View conversation history (from agent detail view)
+- `j/k` - Scroll conversation up/down
 - `Tab` - Switch between views (Agents, Notifications, Servers)
 - `Esc` - Go back
 - `q` - Quit
