@@ -53,38 +53,38 @@ var copilotPatterns = []*regexp.Regexp{
 // DiscoverInPane analyzes a pane to detect if it contains an agent session
 func (d *AgentDiscovery) DiscoverInPane(serverName string, sessionName string, windowIndex int, paneID string, currentCommand string) (*DiscoveryResult, error) {
 	// CRITICAL: Check current command FIRST to avoid false positives
-	// Only analyze content if the pane is running a known agent process
-	if !isAgentCommand(currentCommand) {
-		return nil, nil // Not an agent process, skip content analysis
+	// If the command is a known agent, trust it and return immediately
+	if isAgentCommand(currentCommand) {
+		// Determine agent type from command
+		agentType := "unknown"
+		confidence := 0.95 // High confidence since we verified the process
+
+		if strings.HasPrefix(currentCommand, "claude") {
+			agentType = "claude-code"
+		} else if strings.HasPrefix(currentCommand, "node") {
+			agentType = "claude-code" // Assume node is Claude Code
+		} else if strings.HasPrefix(currentCommand, "gh") {
+			agentType = "copilot"
+		} else if strings.HasPrefix(currentCommand, "python") {
+			agentType = "python-agent"
+		} else if strings.HasPrefix(currentCommand, "aider") {
+			agentType = "aider"
+		} else if strings.HasPrefix(currentCommand, "cursor") {
+			agentType = "cursor"
+		}
+
+		return &DiscoveryResult{
+			ServerName:      serverName,
+			TmuxSessionName: sessionName,
+			TmuxWindowIndex: windowIndex,
+			TmuxPaneID:      paneID,
+			AgentType:       agentType,
+			Confidence:      confidence,
+			Evidence:        []string{fmt.Sprintf("process: %s", currentCommand)},
+		}, nil
 	}
 
-	// Capture pane content
-	result, err := d.tmuxClient.GetRecentContent(paneID, 200)
-	if err != nil {
-		return nil, fmt.Errorf("failed to capture pane content: %w", err)
-	}
-
-	content := result.Content
-
-	// Try Claude Code detection
-	if claudeResult := d.detectClaudeCode(content); claudeResult != nil {
-		claudeResult.ServerName = serverName
-		claudeResult.TmuxSessionName = sessionName
-		claudeResult.TmuxWindowIndex = windowIndex
-		claudeResult.TmuxPaneID = paneID
-		return claudeResult, nil
-	}
-
-	// Try Copilot detection
-	if copilotResult := d.detectCopilot(content); copilotResult != nil {
-		copilotResult.ServerName = serverName
-		copilotResult.TmuxSessionName = sessionName
-		copilotResult.TmuxWindowIndex = windowIndex
-		copilotResult.TmuxPaneID = paneID
-		return copilotResult, nil
-	}
-
-	return nil, nil // No agent detected
+	return nil, nil // Not an agent process
 }
 
 // isAgentCommand checks if the command is a known agent process

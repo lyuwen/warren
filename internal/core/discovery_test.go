@@ -24,36 +24,42 @@ func TestAgentDiscovery_DetectClaudeCode(t *testing.T) {
 	tests := []struct {
 		name       string
 		content    string
+		command    string
 		shouldFind bool
 		minConf    float64
 	}{
 		{
 			name:       "clear claude code indicator",
 			content:    "Running claude code in this terminal",
+			command:    "claude",
 			shouldFind: true,
 			minConf:    0.9,
 		},
 		{
 			name:       "anthropic sdk",
 			content:    "import @anthropic-ai/sdk",
+			command:    "claude",
 			shouldFind: true,
 			minConf:    0.1,
 		},
 		{
 			name:       "claude version",
 			content:    "Claude 4.6 is running",
+			command:    "claude",
 			shouldFind: true,
 			minConf:    0.1,
 		},
 		{
 			name:       "thinking tags",
 			content:    "<thinking>analyzing the code</thinking>",
+			command:    "claude",
 			shouldFind: true,
 			minConf:    0.1,
 		},
 		{
 			name:       "no agent",
 			content:    "just a regular terminal session",
+			command:    "bash",
 			shouldFind: false,
 			minConf:    0.0,
 		},
@@ -65,7 +71,7 @@ func TestAgentDiscovery_DetectClaudeCode(t *testing.T) {
 			client := tmux.NewClient(executor)
 			discovery := NewAgentDiscovery(client)
 
-			result, err := discovery.DiscoverInPane("test-server", "test-session", 0, "%1", "claude")
+			result, err := discovery.DiscoverInPane("test-server", "test-session", 0, "%1", tt.command)
 			if err != nil {
 				t.Fatalf("Discovery failed: %v", err)
 			}
@@ -94,21 +100,25 @@ func TestAgentDiscovery_DetectCopilot(t *testing.T) {
 	tests := []struct {
 		name       string
 		content    string
+		command    string
 		shouldFind bool
 	}{
 		{
 			name:       "github copilot",
 			content:    "Running GitHub Copilot CLI",
+			command:    "gh",
 			shouldFind: true,
 		},
 		{
 			name:       "gh copilot command",
 			content:    "gh copilot suggest",
+			command:    "gh",
 			shouldFind: true,
 		},
 		{
 			name:       "no agent",
 			content:    "just a regular terminal",
+			command:    "bash",
 			shouldFind: false,
 		},
 	}
@@ -119,7 +129,7 @@ func TestAgentDiscovery_DetectCopilot(t *testing.T) {
 			client := tmux.NewClient(executor)
 			discovery := NewAgentDiscovery(client)
 
-			result, err := discovery.DiscoverInPane("test-server", "test-session", 0, "%1", "claude")
+			result, err := discovery.DiscoverInPane("test-server", "test-session", 0, "%1", tt.command)
 			if err != nil {
 				t.Fatalf("Discovery failed: %v", err)
 			}
