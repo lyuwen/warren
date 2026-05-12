@@ -29,8 +29,10 @@ type Warren struct {
 	minConfidence float64
 
 	// Session tracking
-	sessions map[string]*MonitoredSession
-	mu       sync.RWMutex
+	sessions        map[string]*MonitoredSession
+	sessionRegistry *AgentSessionRegistry
+	serverRegistry  *ServerRegistry
+	mu              sync.RWMutex
 
 	// Control
 	ctx    context.Context
@@ -54,6 +56,7 @@ type Config struct {
 	PollInterval  time.Duration
 	MinConfidence float64
 	DBPath        string
+	ConfigDir     string
 }
 
 // DefaultConfig returns sensible defaults
@@ -62,6 +65,7 @@ func DefaultConfig() *Config {
 		PollInterval:  500 * time.Millisecond,
 		MinConfidence: 0.7,
 		DBPath:        "warren.db",
+		ConfigDir:     ".warren",
 	}
 }
 
@@ -69,6 +73,11 @@ func DefaultConfig() *Config {
 func NewWarren(config *Config) (*Warren, error) {
 	if config == nil {
 		config = DefaultConfig()
+	}
+
+	// Set default ConfigDir if not provided
+	if config.ConfigDir == "" {
+		config.ConfigDir = ".warren"
 	}
 
 	// Initialize event store
@@ -86,6 +95,13 @@ func NewWarren(config *Config) (*Warren, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Initialize registries
+	sessionRegistry := NewAgentSessionRegistry()
+	serverRegistry, err := NewServerRegistry(config.ConfigDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create server registry: %w", err)
+	}
+
 	return &Warren{
 		tmuxClient:      tmuxClient,
 		parser:          parser,
@@ -96,6 +112,8 @@ func NewWarren(config *Config) (*Warren, error) {
 		pollInterval:    config.PollInterval,
 		minConfidence:   config.MinConfidence,
 		sessions:        make(map[string]*MonitoredSession),
+		sessionRegistry: sessionRegistry,
+		serverRegistry:  serverRegistry,
 		ctx:             ctx,
 		cancel:          cancel,
 	}, nil
@@ -337,3 +355,4 @@ func (w *Warren) GetNotificationEngine() *notifications.Engine {
 func (w *Warren) GetTmuxClient() *tmux.Client {
 	return w.tmuxClient
 }
+
