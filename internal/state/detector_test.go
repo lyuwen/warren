@@ -173,7 +173,7 @@ func TestStateDetector_DetectFromContent(t *testing.T) {
 			name:          "question",
 			content:       "Should I continue with this approach?",
 			expectedState: types.StateAskingQuestion,
-			minConfidence: 0.8,
+			minConfidence: 0.6, // Lower confidence without AskUserQuestion tool
 		},
 		{
 			name:          "error",
@@ -341,5 +341,396 @@ func TestStateDetector_MultipleSignals(t *testing.T) {
 	// Should have multiple signals
 	if len(result.Signals) < 2 {
 		t.Errorf("Expected multiple signals, got %d", len(result.Signals))
+	}
+}
+
+// Test new idle detection features
+func TestStateDetector_IdleDetection_PromptSuffix(t *testing.T) {
+	detector := NewStateDetector()
+
+	tests := []struct {
+		name          string
+		content       string
+		expectedState types.AgentState
+		minConfidence float64
+	}{
+		{
+			name:          "bash prompt",
+			content:       "user@host:~/project$ ",
+			expectedState: types.StateIdle,
+			minConfidence: 0.95,
+		},
+		{
+			name:          "generic prompt",
+			content:       "Ready for input\n> ",
+			expectedState: types.StateIdle,
+			minConfidence: 0.95,
+		},
+		{
+			name:          "waiting for input indicator",
+			content:       "Waiting for input from user",
+			expectedState: types.StateIdle,
+			minConfidence: 0.8,
+		},
+		{
+			name:          "standing by indicator",
+			content:       "Standing by for next command",
+			expectedState: types.StateIdle,
+			minConfidence: 0.8,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := detector.DetectFromContent(tt.content)
+
+			if result.State != tt.expectedState {
+				t.Errorf("Expected state %s, got %s", tt.expectedState, result.State)
+			}
+
+			if result.Confidence < tt.minConfidence {
+				t.Errorf("Expected confidence >= %.2f, got %.2f", tt.minConfidence, result.Confidence)
+			}
+		})
+	}
+}
+
+// Test reduced idle timeout (30s instead of 5min)
+func TestStateDetector_IdleDetection_ReducedTimeout(t *testing.T) {
+	detector := NewStateDetector()
+
+	tests := []struct {
+		name          string
+		age           time.Duration
+		expectedState types.AgentState
+		minStrength   float64
+	}{
+		{
+			name:          "35 seconds old - should be idle",
+			age:           35 * time.Second,
+			expectedState: types.StateIdle,
+			minStrength:   0.7,
+		},
+		{
+			name:          "1 minute old - higher confidence",
+			age:           1 * time.Minute,
+			expectedState: types.StateIdle,
+			minStrength:   0.8,
+		},
+		{
+			name:          "2 minutes old - very high confidence",
+			age:           2 * time.Minute,
+			expectedState: types.StateIdle,
+			minStrength:   0.9,
+		},
+		{
+			name:          "20 seconds old - not idle yet",
+			age:           20 * time.Second,
+			expectedState: types.StateThinking,
+			minStrength:   0.5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			activities := []*events.AgentActivityEvent{
+				{
+					AgentID:      "test-agent",
+					ActivityType: "chat",
+					Content:      "Last message",
+					Metadata:     map[string]string{"role": "assistant"},
+					Timestamp:    time.Now().Add(-tt.age),
+				},
+			}
+
+			result := detector.DetectFromActivities(activities)
+
+			if result.State != tt.expectedState {
+				t.Errorf("Expected state %s, got %s", tt.expectedState, result.State)
+			}
+		})
+	}
+}
+
+// Test stricter question detection
+func TestStateDetector_StricterQuestionDetection(t *testing.T) {
+	detector := NewStateDetector()
+
+	tests := []struct {
+		name          string
+		content       string
+		expectedState types.AgentState
+		description   string
+	}{
+		{
+			name:          "question with tool - high confidence",
+			content:       "Should I proceed?\nAskUserQuestion tool called",
+			expectedState: types.StateAskingQuestion,
+			description:   "Question at end with tool indicator",
+		},
+		{
+			name:          "question without tool - lower confidence",
+			content:       "Should I proceed?",
+			expectedState: types.StateAskingQuestion,
+			description:   "Question at end without tool",
+		},
+		{
+			name:          "question in middle - should not detect",
+			content:       "I was wondering if this works?\nNow executing the command...",
+			expectedState: types.StateExecuting,
+			description:   "Question not in last 3 lines",
+		},
+		{
+			name:          "code comment with question - should not detect",
+			content:       "// Should we refactor this?\nExecuting tests",
+			expectedState: types.StateExecuting,
+			description:   "Question in code comment",
+		},
+		{
+			name:          "rhetorical question - should not detect strongly",
+			content:       "This is interesting, isn't it?\nExecuting the next step",
+			expectedState: types.StateExecuting,
+			description:   "Rhetorical question without proper pattern",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := detector.DetectFromContent(tt.content)
+
+			if result.State != tt.expectedState {
+				t.Errorf("%s: Expected state %s, got %s", tt.description, tt.expectedState, result.State)
+			}
+		})
+	}
+}
+
+// Test time-decay for signals
+func TestStateDetector_TimeDecay(t *testing.T) {
+	detector := NewStateDetector()
+
+	tests := []struct {
+		name        string
+		signalAge   time.Duration
+		baseStrength float64
+		expectedDecay float64
+	}{
+		{
+			name:          "fresh signal (10s) - no decay",
+			signalAge:     10 * time.Second,
+			baseStrength:  0.9,
+			expectedDecay: 1.0,
+		},
+		{
+			name:          "medium age (45s) - 50% decay",
+			signalAge:     45 * time.Second,
+			baseStrength:  0.9,
+			expectedDecay: 0.5,
+		},
+		{
+			name:          "old signal (3min) - 20% decay",
+			signalAge:     3 * time.Minute,
+			baseStrength:  0.9,
+			expectedDecay: 0.2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			signals := []*Signal{
+				{
+					State:     types.StateAskingQuestion,
+					Strength:  tt.baseStrength,
+					Evidence:  "test signal",
+					Timestamp: time.Now().Add(-tt.signalAge),
+				},
+			}
+
+			state, confidence := detector.determineState(signals)
+
+			expectedConfidence := tt.baseStrength * tt.expectedDecay
+			tolerance := 0.05
+
+			if state != types.StateAskingQuestion {
+				t.Errorf("Expected StateAskingQuestion, got %s", state)
+			}
+
+			if confidence < expectedConfidence-tolerance || confidence > expectedConfidence+tolerance {
+				t.Errorf("Expected confidence ~%.2f (%.2f * %.2f), got %.2f",
+					expectedConfidence, tt.baseStrength, tt.expectedDecay, confidence)
+			}
+		})
+	}
+}
+
+// Test state priority adjustment (idle raised from 30 to 35)
+func TestStateDetector_IdlePriorityRaised(t *testing.T) {
+	detector := NewStateDetector()
+
+	// Idle should now have priority 35
+	if detector.statePriority[types.StateIdle] != 35 {
+		t.Errorf("Expected idle priority 35, got %d", detector.statePriority[types.StateIdle])
+	}
+
+	// Test that idle signal is strong enough to be detected
+	// Even with a weak thinking signal present
+	activities := []*events.AgentActivityEvent{
+		{
+			AgentID:      "test-agent",
+			ActivityType: "chat",
+			Content:      "Working on it",
+			Metadata:     map[string]string{"role": "assistant"},
+			Timestamp:    time.Now().Add(-2 * time.Minute), // Old enough for strong idle signal
+		},
+	}
+
+	result := detector.DetectFromActivities(activities)
+
+	// Should detect idle due to age and strong idle signal (0.9)
+	// The thinking signal (0.5) will decay to 0.1 (20% after 2min)
+	// Idle signal (0.9) should win even though thinking has higher priority (40 vs 35)
+	// because the confidence difference is large enough
+	if result.State != types.StateIdle {
+		t.Errorf("Expected StateIdle with strong signal, got %s (confidence: %.2f)", result.State, result.Confidence)
+	}
+}
+
+// Test that demonstrates the false positive prevented by idle priority raise
+func TestStateDetector_IdlePriorityPreventsThinkingFalsePositive(t *testing.T) {
+	detector := NewStateDetector()
+
+	// Scenario: Agent finished responding 1 minute ago, now idle at prompt
+	// Without priority 35, thinking (priority 40, strength 0.25 after decay)
+	// would beat idle (priority 30, strength 0.8) due to priority alone
+	activities := []*events.AgentActivityEvent{
+		{
+			AgentID:      "test-agent",
+			ActivityType: "chat",
+			Content:      "Here's the implementation",
+			Metadata:     map[string]string{"role": "assistant"},
+			Timestamp:    time.Now().Add(-1 * time.Minute),
+		},
+	}
+
+	result := detector.DetectFromActivities(activities)
+
+	// With priority 35 and 2x confidence override:
+	// - Thinking: priority 40, strength 0.5 * 0.5 = 0.25 (after decay)
+	// - Idle: priority 35, strength 0.8
+	// Idle wins because 0.8 > 0.25 * 2.0 (0.5)
+	if result.State != types.StateIdle {
+		t.Errorf("False positive prevented: agent should be idle, not %s", result.State)
+		t.Errorf("This is the bug that priority 35 fixes - old thinking signals shouldn't override strong idle signals")
+	}
+
+	// Verify confidence is high
+	if result.Confidence < 0.7 {
+		t.Errorf("Expected high confidence for idle detection, got %.2f", result.Confidence)
+	}
+}
+
+// Integration test: idle agent should show idle within 5 seconds
+func TestStateDetector_Integration_IdleWithin5Seconds(t *testing.T) {
+	detector := NewStateDetector()
+
+	// Simulate an agent that finished responding 35 seconds ago
+	activities := []*events.AgentActivityEvent{
+		{
+			AgentID:      "test-agent",
+			ActivityType: "chat",
+			Content:      "Here's the implementation. Let me know if you need changes.",
+			Metadata:     map[string]string{"role": "assistant"},
+			Timestamp:    time.Now().Add(-35 * time.Second),
+		},
+	}
+
+	result := detector.DetectFromActivities(activities)
+
+	if result.State != types.StateIdle {
+		t.Errorf("Expected StateIdle for agent idle >30s, got %s", result.State)
+	}
+
+	if result.Confidence < 0.7 {
+		t.Errorf("Expected confidence >= 0.7 for idle detection, got %.2f", result.Confidence)
+	}
+}
+
+// Test that old question signals don't cause false positives
+func TestStateDetector_OldQuestionSignalsDecay(t *testing.T) {
+	detector := NewStateDetector()
+
+	// Old question (3 minutes ago) + recent idle indicator
+	content := "Should I proceed with this approach?\n\n[... 3 minutes of output ...]\n\nReady for input\n> "
+
+	result := detector.DetectFromContent(content)
+
+	// Should detect idle (prompt suffix) over old question
+	if result.State != types.StateIdle {
+		t.Errorf("Expected StateIdle (prompt detected), got %s", result.State)
+	}
+}
+
+// Additional edge cases for question detection
+func TestStateDetector_QuestionDetectionEdgeCases(t *testing.T) {
+	detector := NewStateDetector()
+
+	tests := []struct {
+		name          string
+		content       string
+		expectedState types.AgentState
+		description   string
+	}{
+		{
+			name:          "URL with query params - not a question",
+			content:       "Fetching https://api.example.com/data?id=123&format=json\nExecuting request",
+			expectedState: types.StateExecuting,
+			description:   "Question mark in URL should not trigger question detection",
+		},
+		{
+			name:          "Markdown code block with question - not a question",
+			content:       "```python\n# Should we cache this?\ndef process():\n    pass\n```\nExecuting tests",
+			expectedState: types.StateExecuting,
+			description:   "Question in code block should be ignored",
+		},
+		{
+			name:          "Multiple questions with tool - high confidence",
+			content:       "I have a few questions:\n1. Should I proceed?\n2. Do you want me to continue?\nAskUserQuestion",
+			expectedState: types.StateAskingQuestion,
+			description:   "Multiple questions with tool should be detected",
+		},
+		{
+			name:          "Question in middle of long output - not detected",
+			content:       "Should I do this?\n\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nNow executing the command",
+			expectedState: types.StateExecuting,
+			description:   "Question not in last 3 lines should not be detected",
+		},
+		{
+			name:          "Exclamation as emphasis - not a question",
+			content:       "This is important!\nExecuting the task now",
+			expectedState: types.StateExecuting,
+			description:   "Exclamation marks should not trigger question detection",
+		},
+		{
+			name:          "Question with typo - still detected",
+			content:       "Should I procede with this?",
+			expectedState: types.StateAskingQuestion,
+			description:   "Question with typo in verb should still match 'should i' pattern",
+		},
+		{
+			name:          "Embedded question in sentence - detected",
+			content:       "I'm wondering: should I continue with this approach?",
+			expectedState: types.StateAskingQuestion,
+			description:   "Embedded question should be detected",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := detector.DetectFromContent(tt.content)
+
+			if result.State != tt.expectedState {
+				t.Errorf("%s: Expected state %s, got %s", tt.description, tt.expectedState, result.State)
+			}
+		})
 	}
 }
