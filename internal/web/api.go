@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -164,6 +165,74 @@ func (s *Server) handleConsumeNotification(w http.ResponseWriter, r *http.Reques
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleGetConversation returns conversation history for an agent
+func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract agent ID from path: /api/conversation/{id}
+	agentID := strings.TrimPrefix(r.URL.Path, "/api/conversation/")
+	if agentID == "" {
+		http.Error(w, "Agent ID required", http.StatusBadRequest)
+		return
+	}
+
+	// Parse query parameters
+	limit := 50
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if n, err := parseIntParam(limitStr); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+
+	offset := 0
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if n, err := parseIntParam(offsetStr); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+
+	// TODO: Get session/server/pane from Warren once topology tracking is available
+	// For now, return a placeholder response indicating integration is pending
+
+	// Check if agent exists
+	sessions := s.warren.GetAllSessions()
+	var found bool
+	for _, session := range sessions {
+		if session.AgentID == agentID {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		http.Error(w, "Agent not found", http.StatusNotFound)
+		return
+	}
+
+	// Return placeholder response
+	response := map[string]interface{}{
+		"agent_id": agentID,
+		"messages": []interface{}{},
+		"total":    0,
+		"limit":    limit,
+		"offset":   offset,
+		"status":   "pending_integration",
+		"message":  "Conversation history integration pending Warren topology tracking",
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// parseIntParam parses an integer parameter from a string
+func parseIntParam(s string) (int, error) {
+	var n int
+	_, err := fmt.Sscanf(s, "%d", &n)
+	return n, err
 }
 
 // respondJSON writes a JSON response

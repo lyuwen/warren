@@ -16,10 +16,11 @@ var staticFiles embed.FS
 
 // Server is the HTTP server for the Warren web interface
 type Server struct {
-	warren     *core.Warren
-	httpServer *http.Server
-	addr       string
-	wsHub      *Hub
+	warren              *core.Warren
+	conversationService *core.ConversationService
+	httpServer          *http.Server
+	addr                string
+	wsHub               *Hub
 }
 
 // Config configures the web server
@@ -37,9 +38,10 @@ func NewServer(config *Config) *Server {
 	wsHub := NewHub()
 
 	server := &Server{
-		warren: config.Warren,
-		addr:   config.Addr,
-		wsHub:  wsHub,
+		warren:              config.Warren,
+		conversationService: core.NewConversationService(),
+		addr:                config.Addr,
+		wsHub:               wsHub,
 	}
 
 	mux := http.NewServeMux()
@@ -50,6 +52,9 @@ func NewServer(config *Config) *Server {
 	mux.HandleFunc("/api/agents/", server.handleGetAgent)
 	mux.HandleFunc("/api/notifications", server.handleGetNotifications)
 	mux.HandleFunc("/api/notifications/consume", server.handleConsumeNotification)
+
+	// Conversation route
+	mux.HandleFunc("/api/conversation/", server.handleGetConversation)
 
 	// WebSocket route
 	mux.HandleFunc("/ws", server.handleWebSocket)
