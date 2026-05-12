@@ -204,16 +204,42 @@ func (m *Model) loadConversation() {
 		return
 	}
 
-	// TODO: Integrate with Warren's session/server/pane tracking
-	// For now, show a placeholder message
-	// Once Warren has full topology tracking, we can:
-	// 1. Get AgentSession from Warren
-	// 2. Get Server info
-	// 3. Get Pane info
-	// 4. Call conversationService.GetRecentMessages(session, server, pane, 50)
+	// Get agent session from Warren
+	session, err := m.warren.GetSession(m.selectedAgentID)
+	if err != nil {
+		m.conversationError = fmt.Sprintf("Failed to get session: %v", err)
+		m.conversationMessages = nil
+		return
+	}
 
-	m.conversationError = "Conversation history integration pending"
-	m.conversationMessages = nil
+	// Get server info
+	server, err := m.warren.GetServer(session.ServerName)
+	if err != nil {
+		m.conversationError = fmt.Sprintf("Failed to get server: %v", err)
+		m.conversationMessages = nil
+		return
+	}
+
+	// Get pane info
+	pane, err := m.warren.GetPane(session, server)
+	if err != nil {
+		m.conversationError = fmt.Sprintf("Failed to get pane: %v", err)
+		m.conversationMessages = nil
+		return
+	}
+
+	// Load conversation from Claude session files
+	messages, err := m.conversationService.GetRecentMessages(session, server, pane, 50)
+	if err != nil {
+		m.conversationError = fmt.Sprintf("Failed to load conversation: %v", err)
+		m.conversationMessages = nil
+		return
+	}
+
+	// Filter to user/assistant messages only
+	m.conversationMessages = claude.FilterUserAssistant(messages)
+	m.conversationError = ""
+	m.conversationScroll = 0
 }
 
 // View renders the current view

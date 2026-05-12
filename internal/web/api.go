@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lfu/warren/internal/claude"
 	"github.com/lfu/warren/internal/core"
 )
 
@@ -196,33 +197,49 @@ func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// TODO: Get session/server/pane from Warren once topology tracking is available
-	// For now, return a placeholder response indicating integration is pending
-
-	// Check if agent exists
-	sessions := s.warren.GetAllSessions()
-	var found bool
-	for _, session := range sessions {
-		if session.AgentID == agentID {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		http.Error(w, "Agent not found", http.StatusNotFound)
+	// Get agent session from Warren
+	session, err := s.warren.GetSession(agentID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get session: %v", err), http.StatusNotFound)
 		return
 	}
 
-	// Return placeholder response
+	// Get server info
+	server, err := s.warren.GetServer(session.ServerName)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get server: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Get pane info
+	pane, err := s.warren.GetPane(session, server)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get pane: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Load conversation from Claude session files
+	messages, err := s.conversationService.GetRecentMessages(session, server, pane, limit)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to load conversation: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Apply offset if specified
+	if offset > 0 && offset < len(messages) {
+		messages = messages[offset:]
+	} else if offset >= len(messages) {
+		messages = []*claude.Message{}
+	}
+
+	// Build response
 	response := map[string]interface{}{
 		"agent_id": agentID,
-		"messages": []interface{}{},
-		"total":    0,
+		"messages": messages,
+		"total":    len(messages),
 		"limit":    limit,
 		"offset":   offset,
-		"status":   "pending_integration",
-		"message":  "Conversation history integration pending Warren topology tracking",
+		"status":   "ok",
 	}
 
 	respondJSON(w, http.StatusOK, response)
