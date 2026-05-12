@@ -11,9 +11,13 @@ func (w *Warren) GetSession(agentID string) (*AgentSession, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
-	// Check if we have this session in the registry
+	// Try registry first
 	if w.sessionRegistry != nil {
-		return w.sessionRegistry.Get(agentID)
+		session, err := w.sessionRegistry.Get(agentID)
+		if err == nil {
+			return session, nil
+		}
+		// If not found in registry, fall through to fallback
 	}
 
 	// Fallback: check old MonitoredSession map

@@ -411,8 +411,21 @@ class WarrenApp {
 
     renderMessage(msg) {
         const timestamp = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : '';
-        const role = msg.role || 'unknown';
-        const content = this.escapeHtml(msg.content || '');
+        const role = msg.type || 'unknown';
+
+        // Extract content from message.content array
+        let content = '';
+        if (msg.message && msg.message.content && Array.isArray(msg.message.content)) {
+            // Extract text from content blocks
+            content = msg.message.content
+                .filter(block => block.type === 'text' || block.text)
+                .map(block => block.text || block.thinking || '')
+                .join('\n');
+        } else if (msg.content) {
+            content = msg.content;
+        }
+
+        content = this.escapeHtml(content || '(no content)');
 
         let toolCallsHtml = '';
         if (msg.tool_calls && msg.tool_calls.length > 0) {

@@ -19,13 +19,13 @@ type Message struct {
 	Type        string          `json:"type"`
 	UUID        string          `json:"uuid"`
 	ParentUUID  string          `json:"parentUuid"`
-	Timestamp   time.Time       `json:"-"`
-	TimestampRaw string         `json:"timestamp"`
-	Role        string          `json:"-"` // Extracted from message.role
-	Content     string          `json:"-"` // Simplified content
-	Model       string          `json:"-"` // Model used (for assistant messages)
-	ToolCalls   []ToolCall      `json:"-"` // Tool calls in this message
-	RawMessage  json.RawMessage `json:"message"`
+	Timestamp   time.Time       `json:"timestamp"`
+	TimestampRaw string         `json:"-"`
+	Role        string          `json:"role,omitempty"` // Extracted from message.role
+	Content     string          `json:"content,omitempty"` // Simplified content
+	Model       string          `json:"model,omitempty"` // Model used (for assistant messages)
+	ToolCalls   []ToolCall      `json:"toolCalls,omitempty"` // Tool calls in this message
+	RawMessage  json.RawMessage `json:"message,omitempty"`
 	IsSidechain bool            `json:"isSidechain"`
 }
 
