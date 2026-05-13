@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -25,8 +26,9 @@ type Warren struct {
 	artifactManager *ArtifactProfileManager
 
 	// Configuration
-	pollInterval time.Duration
+	pollInterval  time.Duration
 	minConfidence float64
+	registryPath  string
 
 	// Session tracking
 	sessions        map[string]*MonitoredSession
@@ -97,6 +99,20 @@ func NewWarren(config *Config) (*Warren, error) {
 
 	// Initialize registries
 	sessionRegistry := NewAgentSessionRegistry()
+
+	// Load persisted registry from disk
+	registryPath := filepath.Join(config.ConfigDir, "registry.json")
+	if err := sessionRegistry.Load(registryPath); err != nil {
+		// Log warning but don't fail - we can continue with empty registry
+		fmt.Printf("Warning: failed to load registry from %s: %v\n", registryPath, err)
+	}
+
+	// Prune stale sessions
+	pruned := sessionRegistry.Prune()
+	if pruned > 0 {
+		fmt.Printf("Pruned %d stale sessions from registry\n", pruned)
+	}
+
 	serverRegistry, err := NewServerRegistry(config.ConfigDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create server registry: %w", err)
@@ -111,6 +127,7 @@ func NewWarren(config *Config) (*Warren, error) {
 		artifactManager: artifactManager,
 		pollInterval:    config.PollInterval,
 		minConfidence:   config.MinConfidence,
+		registryPath:    registryPath,
 		sessions:        make(map[string]*MonitoredSession),
 		sessionRegistry: sessionRegistry,
 		serverRegistry:  serverRegistry,

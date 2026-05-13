@@ -1,7 +1,10 @@
 package core
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -249,3 +252,96 @@ func (r *AgentSessionRegistry) UpdateState(id string, state AgentState) error {
 func (r *AgentSessionRegistry) Count() int {
 	return len(r.sessions)
 }
+
+// RegistryFile represents the persisted registry file format
+type RegistryFile struct {
+	Version   string                   `json:"version"`
+	UpdatedAt time.Time                `json:"updated_at"`
+	Sessions  map[string]*AgentSession `json:"sessions"`
+}
+
+// Load loads the registry from a JSON file
+func (r *AgentSessionRegistry) Load(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// File doesn't exist yet, that's okay
+			return nil
+		}
+		return fmt.Errorf("failed to read registry file: %w", err)
+	}
+
+	var file RegistryFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return fmt.Errorf("failed to parse registry file: %w", err)
+	}
+
+	// Load sessions into registry
+	for id, session := range file.Sessions {
+		r.sessions[id] = session
+	}
+
+	return nil
+}
+
+// Save saves the registry to a JSON file with atomic write
+func (r *AgentSessionRegistry) Save(path string) error {
+	// Create directory if it doesn't exist
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Prepare registry file
+	file := RegistryFile{
+		Version:   "1.0",
+		UpdatedAt: time.Now(),
+		Sessions:  r.sessions,
+	}
+
+	// Marshal to JSON
+	data, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal registry: %w", err)
+	}
+
+	// Atomic write: write to temp file, then rename
+	tempPath := path + ".tmp"
+	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+
+	if err := os.Rename(tempPath, path); err != nil {
+		os.Remove(tempPath) // Clean up temp file
+		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+
+	return nil
+}
+
+// Merge merges discovered sessions into the registry
+// Discovered sessions override persisted sessions with the same ID
+func (r *AgentSessionRegistry) Merge(discovered []*AgentSession) {
+	for _, session := range discovered {
+		r.sessions[session.ID] = session
+	}
+}
+
+// Prune removes stale sessions from the registry
+// A session is stale if LastSeenAt is more than 24 hours ago
+// Returns the number of sessions pruned
+func (r *AgentSessionRegistry) Prune() int {
+	pruned := 0
+	staleThreshold := time.Now().Add(-24 * time.Hour)
+
+	for id, session := range r.sessions {
+		// Check if session is stale
+		if session.LastSeenAt.Before(staleThreshold) {
+			delete(r.sessions, id)
+			pruned++
+		}
+	}
+
+	return pruned
+}
+
