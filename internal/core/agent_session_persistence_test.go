@@ -3,6 +3,7 @@ package core
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -297,3 +298,355 @@ func TestAgentSessionRegistry_AtomicWrite(t *testing.T) {
 		t.Errorf("Registry file should exist")
 	}
 }
+
+func TestAgentSessionRegistry_ConcurrentSave(t *testing.T) {
+	tempDir := t.TempDir()
+	registryPath := filepath.Join(tempDir, "registry.json")
+
+	const numGoroutines = 10
+	const numIterations = 5
+
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	// Launch multiple goroutines that save concurrently
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+
+			for j := 0; j < numIterations; j++ {
+				registry := NewAgentSessionRegistry()
+
+				session := &AgentSession{
+					ID:              "test-" + string(rune('A'+id)),
+					Name:            "Test Agent",
+					ServerName:      "localhost",
+					TmuxPaneID:      "%1",
+					AgentType:       "claude-code",
+					CreatedAt:       time.Now(),
+					LastSeenAt:      time.Now(),
+					CurrentState:    types.StateIdle,
+				}
+
+				if err := registry.Register(session); err != nil {
+					t.Errorf("Goroutine %d: Failed to register session: %v", id, err)
+					return
+				}
+
+				if err := registry.Save(registryPath); err != nil {
+					t.Errorf("Goroutine %d: Failed to save registry: %v", id, err)
+					return
+				}
+
+				// Small delay to increase contention
+				time.Sleep(time.Millisecond)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify file is not corrupted by loading it
+	registry := NewAgentSessionRegistry()
+	if err := registry.Load(registryPath); err != nil {
+		t.Fatalf("Failed to load registry after concurrent saves: %v", err)
+	}
+
+	// File should contain valid JSON (Load would fail if corrupted)
+	t.Logf("Successfully loaded registry with %d sessions after concurrent saves", registry.Count())
+}
+
+func TestAgentSessionRegistry_ConcurrentLoad(t *testing.T) {
+	tempDir := t.TempDir()
+	registryPath := filepath.Join(tempDir, "registry.json")
+
+	// Create and save initial registry
+	registry := NewAgentSessionRegistry()
+	for i := 0; i < 5; i++ {
+		session := &AgentSession{
+			ID:              "test-" + string(rune('A'+i)),
+			Name:            "Test Agent",
+			ServerName:      "localhost",
+			TmuxPaneID:      "%1",
+			AgentType:       "claude-code",
+			CreatedAt:       time.Now(),
+			LastSeenAt:      time.Now(),
+			CurrentState:    types.StateIdle,
+		}
+		if err := registry.Register(session); err != nil {
+			t.Fatalf("Failed to register session: %v", err)
+		}
+	}
+
+	if err := registry.Save(registryPath); err != nil {
+		t.Fatalf("Failed to save initial registry: %v", err)
+	}
+
+	const numGoroutines = 20
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	// Launch multiple goroutines that load concurrently
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+
+			newRegistry := NewAgentSessionRegistry()
+			if err := newRegistry.Load(registryPath); err != nil {
+				t.Errorf("Goroutine %d: Failed to load registry: %v", id, err)
+				return
+			}
+
+			if newRegistry.Count() != 5 {
+				t.Errorf("Goroutine %d: Expected 5 sessions, got %d", id, newRegistry.Count())
+			}
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+func TestAgentSessionRegistry_ConcurrentSaveAndLoad(t *testing.T) {
+	tempDir := t.TempDir()
+	registryPath := filepath.Join(tempDir, "registry.json")
+
+	// Create initial registry
+	initialRegistry := NewAgentSessionRegistry()
+	session := &AgentSession{
+		ID:              "initial",
+		Name:            "Initial Session",
+		ServerName:      "localhost",
+		TmuxPaneID:      "%0",
+		AgentType:       "claude-code",
+		CreatedAt:       time.Now(),
+		LastSeenAt:      time.Now(),
+		CurrentState:    types.StateIdle,
+	}
+	if err := initialRegistry.Register(session); err != nil {
+		t.Fatalf("Failed to register initial session: %v", err)
+	}
+	if err := initialRegistry.Save(registryPath); err != nil {
+		t.Fatalf("Failed to save initial registry: %v", err)
+	}
+
+	const numSavers = 5
+	const numLoaders = 10
+	const iterations = 3
+
+	var wg sync.WaitGroup
+	wg.Add(numSavers + numLoaders)
+
+	// Launch saver goroutines
+	for i := 0; i < numSavers; i++ {
+		go func(id int) {
+			defer wg.Done()
+
+			for j := 0; j < iterations; j++ {
+				registry := NewAgentSessionRegistry()
+
+				session := &AgentSession{
+					ID:              "saver-" + string(rune('A'+id)),
+					Name:            "Saver Session",
+					ServerName:      "localhost",
+					TmuxPaneID:      "%1",
+					AgentType:       "claude-code",
+					CreatedAt:       time.Now(),
+					LastSeenAt:      time.Now(),
+					CurrentState:    types.StateExecuting,
+				}
+
+				if err := registry.Register(session); err != nil {
+					t.Errorf("Saver %d: Failed to register session: %v", id, err)
+					return
+				}
+
+				if err := registry.Save(registryPath); err != nil {
+					t.Errorf("Saver %d: Failed to save registry: %v", id, err)
+					return
+				}
+
+				time.Sleep(2 * time.Millisecond)
+			}
+		}(i)
+	}
+
+	// Launch loader goroutines
+	for i := 0; i < numLoaders; i++ {
+		go func(id int) {
+			defer wg.Done()
+
+			for j := 0; j < iterations; j++ {
+				registry := NewAgentSessionRegistry()
+
+				if err := registry.Load(registryPath); err != nil {
+					t.Errorf("Loader %d: Failed to load registry: %v", id, err)
+					return
+				}
+
+				// Just verify we got valid data (count >= 0)
+				if registry.Count() < 0 {
+					t.Errorf("Loader %d: Invalid session count: %d", id, registry.Count())
+				}
+
+				time.Sleep(time.Millisecond)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Final verification: load should succeed
+	finalRegistry := NewAgentSessionRegistry()
+	if err := finalRegistry.Load(registryPath); err != nil {
+		t.Fatalf("Failed to load registry after concurrent operations: %v", err)
+	}
+
+	t.Logf("Final registry has %d sessions after concurrent save/load", finalRegistry.Count())
+}
+
+func TestAgentSessionRegistry_LockTimeout(t *testing.T) {
+	tempDir := t.TempDir()
+	registryPath := filepath.Join(tempDir, "registry.json")
+
+	// Create initial registry
+	registry1 := NewAgentSessionRegistry()
+	session := &AgentSession{
+		ID:              "test-1",
+		Name:            "Test Session",
+		ServerName:      "localhost",
+		TmuxPaneID:      "%1",
+		AgentType:       "claude-code",
+		CreatedAt:       time.Now(),
+		LastSeenAt:      time.Now(),
+		CurrentState:    types.StateIdle,
+	}
+	if err := registry1.Register(session); err != nil {
+		t.Fatalf("Failed to register session: %v", err)
+	}
+	if err := registry1.Save(registryPath); err != nil {
+		t.Fatalf("Failed to save initial registry: %v", err)
+	}
+
+	// This test verifies that lock timeout works, but we can't easily
+	// hold a lock indefinitely in a test without using internal APIs.
+	// Instead, we verify that rapid concurrent access doesn't deadlock.
+
+	const numGoroutines = 5
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	start := time.Now()
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+
+			registry := NewAgentSessionRegistry()
+			if err := registry.Load(registryPath); err != nil {
+				t.Errorf("Goroutine %d: Failed to load: %v", id, err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	elapsed := time.Since(start)
+
+	// All operations should complete quickly (well under 5 seconds per operation)
+	if elapsed > 10*time.Second {
+		t.Errorf("Concurrent operations took too long: %v", elapsed)
+	}
+
+	t.Logf("Concurrent operations completed in %v", elapsed)
+}
+
+func TestAgentSessionRegistry_NoCorruptionUnderLoad(t *testing.T) {
+	tempDir := t.TempDir()
+	registryPath := filepath.Join(tempDir, "registry.json")
+
+	const numWriters = 10
+	const numReaders = 20
+	const duration = 2 * time.Second
+
+	var wg sync.WaitGroup
+	wg.Add(numWriters + numReaders)
+
+	stop := make(chan struct{})
+
+	// Launch writer goroutines
+	for i := 0; i < numWriters; i++ {
+		go func(id int) {
+			defer wg.Done()
+
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					registry := NewAgentSessionRegistry()
+
+					// Add multiple sessions
+					for j := 0; j < 3; j++ {
+						session := &AgentSession{
+							ID:              "writer-" + string(rune('A'+id)) + "-" + string(rune('0'+j)),
+							Name:            "Writer Session",
+							ServerName:      "localhost",
+							TmuxPaneID:      "%1",
+							AgentType:       "claude-code",
+							CreatedAt:       time.Now(),
+							LastSeenAt:      time.Now(),
+							CurrentState:    types.StateExecuting,
+						}
+						registry.Register(session)
+					}
+
+					if err := registry.Save(registryPath); err != nil {
+						t.Errorf("Writer %d: Failed to save: %v", id, err)
+						return
+					}
+
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
+		}(i)
+	}
+
+	// Launch reader goroutines
+	for i := 0; i < numReaders; i++ {
+		go func(id int) {
+			defer wg.Done()
+
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					registry := NewAgentSessionRegistry()
+
+					if err := registry.Load(registryPath); err != nil {
+						t.Errorf("Reader %d: Failed to load: %v", id, err)
+						return
+					}
+
+					// Verify we can access the data
+					_ = registry.Count()
+
+					time.Sleep(5 * time.Millisecond)
+				}
+			}
+		}(i)
+	}
+
+	// Run for specified duration
+	time.Sleep(duration)
+	close(stop)
+	wg.Wait()
+
+	// Final verification: file should be valid
+	finalRegistry := NewAgentSessionRegistry()
+	if err := finalRegistry.Load(registryPath); err != nil {
+		t.Fatalf("Failed to load registry after stress test: %v", err)
+	}
+
+	t.Logf("Stress test completed successfully, final registry has %d sessions", finalRegistry.Count())
+}
+

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/lfu/warren/internal/types"
 )
 
@@ -260,14 +262,34 @@ type RegistryFile struct {
 	Sessions  map[string]*AgentSession `json:"sessions"`
 }
 
-// Load loads the registry from a JSON file
+// Load loads the registry from a JSON file with file locking
 func (r *AgentSessionRegistry) Load(path string) error {
+	// Check if file exists first
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		// File doesn't exist yet, that's okay
+		return nil
+	}
+
+	// Create file lock
+	lockPath := path + ".lock"
+	fileLock := flock.New(lockPath)
+
+	// Try to acquire lock with timeout (5 seconds)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	locked, err := fileLock.TryLockContext(ctx, 100*time.Millisecond)
+	if err != nil {
+		return fmt.Errorf("failed to acquire lock: %w", err)
+	}
+	if !locked {
+		return fmt.Errorf("failed to acquire lock: timeout after 5 seconds")
+	}
+	defer fileLock.Unlock()
+
+	// Read file
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			// File doesn't exist yet, that's okay
-			return nil
-		}
 		return fmt.Errorf("failed to read registry file: %w", err)
 	}
 
@@ -284,13 +306,30 @@ func (r *AgentSessionRegistry) Load(path string) error {
 	return nil
 }
 
-// Save saves the registry to a JSON file with atomic write
+// Save saves the registry to a JSON file with atomic write and file locking
 func (r *AgentSessionRegistry) Save(path string) error {
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
+
+	// Create file lock
+	lockPath := path + ".lock"
+	fileLock := flock.New(lockPath)
+
+	// Try to acquire lock with timeout (5 seconds)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	locked, err := fileLock.TryLockContext(ctx, 100*time.Millisecond)
+	if err != nil {
+		return fmt.Errorf("failed to acquire lock: %w", err)
+	}
+	if !locked {
+		return fmt.Errorf("failed to acquire lock: timeout after 5 seconds")
+	}
+	defer fileLock.Unlock()
 
 	// Prepare registry file
 	file := RegistryFile{
