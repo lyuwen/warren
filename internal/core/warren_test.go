@@ -9,16 +9,26 @@ import (
 	"github.com/lfu/warren/internal/events"
 )
 
+// testConfig creates a valid test configuration with a unique temp directory
+func testConfig(dbPath string) *Config {
+	return &Config{
+		PollInterval:           100 * time.Millisecond,
+		MinConfidence:          0.7,
+		DBPath:                 dbPath,
+		ConfigDir:              ".warren-test",
+		EventRetentionPeriod:   30 * 24 * time.Hour,
+		EventPruningInterval:   24 * time.Hour,
+		CacheTTL:               5 * time.Second,
+		RegistryPruneThreshold: 24 * time.Hour,
+	}
+}
+
 func TestWarrenBasicLifecycle(t *testing.T) {
 	// Create temporary database
 	dbPath := "test_warren_basic.db"
 	defer os.Remove(dbPath)
 
-	config := &Config{
-		PollInterval:  100 * time.Millisecond,
-		MinConfidence: 0.7,
-		DBPath:        dbPath,
-	}
+	config := testConfig(dbPath)
 
 	warren, err := NewWarren(config)
 	if err != nil {
@@ -64,11 +74,7 @@ func TestWarrenMultipleSessions(t *testing.T) {
 	dbPath := "test_warren_multi.db"
 	defer os.Remove(dbPath)
 
-	config := &Config{
-		PollInterval:  100 * time.Millisecond,
-		MinConfidence: 0.7,
-		DBPath:        dbPath,
-	}
+	config := testConfig(dbPath)
 
 	warren, err := NewWarren(config)
 	if err != nil {
@@ -115,11 +121,7 @@ func TestWarrenEventStoreIntegration(t *testing.T) {
 	dbPath := "test_warren_events.db"
 	defer os.Remove(dbPath)
 
-	config := &Config{
-		PollInterval:  100 * time.Millisecond,
-		MinConfidence: 0.7,
-		DBPath:        dbPath,
-	}
+	config := testConfig(dbPath)
 
 	warren, err := NewWarren(config)
 	if err != nil {
@@ -168,11 +170,7 @@ func TestWarrenNotificationIntegration(t *testing.T) {
 	dbPath := "test_warren_notif.db"
 	defer os.Remove(dbPath)
 
-	config := &Config{
-		PollInterval:  100 * time.Millisecond,
-		MinConfidence: 0.7,
-		DBPath:        dbPath,
-	}
+	config := testConfig(dbPath)
 
 	warren, err := NewWarren(config)
 	if err != nil {
@@ -211,11 +209,7 @@ func TestWarrenArtifactProfileIntegration(t *testing.T) {
 	dbPath := "test_warren_artifacts.db"
 	defer os.Remove(dbPath)
 
-	config := &Config{
-		PollInterval:  100 * time.Millisecond,
-		MinConfidence: 0.7,
-		DBPath:        dbPath,
-	}
+	config := testConfig(dbPath)
 
 	warren, err := NewWarren(config)
 	if err != nil {
@@ -260,11 +254,7 @@ func TestWarrenConcurrentSessions(t *testing.T) {
 	dbPath := "test_warren_concurrent.db"
 	defer os.Remove(dbPath)
 
-	config := &Config{
-		PollInterval:  50 * time.Millisecond,
-		MinConfidence: 0.7,
-		DBPath:        dbPath,
-	}
+	config := testConfig(dbPath)
 
 	warren, err := NewWarren(config)
 	if err != nil {
@@ -311,11 +301,7 @@ func TestWarrenErrorHandling(t *testing.T) {
 	dbPath := "test_warren_errors.db"
 	defer os.Remove(dbPath)
 
-	config := &Config{
-		PollInterval:  100 * time.Millisecond,
-		MinConfidence: 0.7,
-		DBPath:        dbPath,
-	}
+	config := testConfig(dbPath)
 
 	warren, err := NewWarren(config)
 	if err != nil {
@@ -361,11 +347,7 @@ func TestWarrenGracefulShutdown(t *testing.T) {
 	dbPath := "test_warren_shutdown.db"
 	defer os.Remove(dbPath)
 
-	config := &Config{
-		PollInterval:  100 * time.Millisecond,
-		MinConfidence: 0.7,
-		DBPath:        dbPath,
-	}
+	config := testConfig(dbPath)
 
 	warren, err := NewWarren(config)
 	if err != nil {
@@ -395,11 +377,7 @@ func TestWarrenStateTransition(t *testing.T) {
 	dbPath := "test_warren_state.db"
 	defer os.Remove(dbPath)
 
-	config := &Config{
-		PollInterval:  100 * time.Millisecond,
-		MinConfidence: 0.7,
-		DBPath:        dbPath,
-	}
+	config := testConfig(dbPath)
 
 	warren, err := NewWarren(config)
 	if err != nil {

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -327,3 +328,79 @@ func TestAgentSessionRegistry_Count(t *testing.T) {
 		t.Errorf("Expected count 2, got %d", registry.Count())
 	}
 }
+
+func TestAgentSessionRegistry_PruneWithThreshold(t *testing.T) {
+	tests := []struct {
+		name              string
+		threshold         time.Duration
+		sessionAges       []time.Duration
+		expectedPruned    int
+		expectedRemaining int
+	}{
+		{
+			name:              "1 hour threshold",
+			threshold:         1 * time.Hour,
+			sessionAges:       []time.Duration{30 * time.Minute, 90 * time.Minute, 2 * time.Hour},
+			expectedPruned:    2,
+			expectedRemaining: 1,
+		},
+		{
+			name:              "24 hour threshold",
+			threshold:         24 * time.Hour,
+			sessionAges:       []time.Duration{1 * time.Hour, 12 * time.Hour, 25 * time.Hour, 48 * time.Hour},
+			expectedPruned:    2,
+			expectedRemaining: 2,
+		},
+		{
+			name:              "7 day threshold",
+			threshold:         7 * 24 * time.Hour,
+			sessionAges:       []time.Duration{1 * time.Hour, 3 * 24 * time.Hour, 8 * 24 * time.Hour},
+			expectedPruned:    1,
+			expectedRemaining: 2,
+		},
+		{
+			name:              "no stale sessions",
+			threshold:         24 * time.Hour,
+			sessionAges:       []time.Duration{1 * time.Hour, 12 * time.Hour, 23 * time.Hour},
+			expectedPruned:    0,
+			expectedRemaining: 3,
+		},
+		{
+			name:              "all stale sessions",
+			threshold:         1 * time.Hour,
+			sessionAges:       []time.Duration{2 * time.Hour, 3 * time.Hour, 4 * time.Hour},
+			expectedPruned:    3,
+			expectedRemaining: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := NewAgentSessionRegistry()
+			now := time.Now()
+
+			// Create sessions with specified ages
+			for i, age := range tt.sessionAges {
+				session := &AgentSession{
+					ID:         fmt.Sprintf("session-%d", i),
+					ServerName: "localhost",
+					TmuxPaneID: fmt.Sprintf("%%%d", i),
+					LastSeenAt: now.Add(-age),
+				}
+				registry.sessions[session.ID] = session
+			}
+
+			// Prune with custom threshold
+			pruned := registry.PruneWithThreshold(tt.threshold)
+
+			if pruned != tt.expectedPruned {
+				t.Errorf("Expected %d sessions pruned, got %d", tt.expectedPruned, pruned)
+			}
+
+			if registry.Count() != tt.expectedRemaining {
+				t.Errorf("Expected %d sessions remaining, got %d", tt.expectedRemaining, registry.Count())
+			}
+		})
+	}
+}
+
