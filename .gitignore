@@ -2,6 +2,7 @@
 
 # Binaries
 /warren
+/warren-tui
 /warren-web
 *.exe
 *.dll
