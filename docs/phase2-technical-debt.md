@@ -28,7 +28,7 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 
 ---
 
-### 2. No File Locking for Registry
+### 2. ~~No File Locking for Registry~~ ✅ **RESOLVED**
 
 **Issue:** Registry JSON file has no file locking. Concurrent Warren instances could corrupt the registry.
 
@@ -36,11 +36,17 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 
 **Effort:** Low (4-8 hours)
 
-**Recommendation:** Add file locking (flock on Linux, LockFileEx on Windows) before Phase 3.
+**Resolution:** Implemented file locking using `github.com/gofrs/flock` with 5-second timeout and 100ms retry interval. Comprehensive concurrent access tests added.
 
-**Workaround:** Don't run multiple Warren instances in same directory.
+**Resolved:** May 13, 2026
+
+**Documentation:** `docs/file-locking.md`
 
 **Code Location:** `internal/core/agent_session.go` (Save/Load methods)
+
+**Tests:** `internal/core/agent_session_persistence_test.go` (6 concurrent access tests)
+
+**Demo:** `examples/concurrent_registry_demo.go`
 
 ---
 
