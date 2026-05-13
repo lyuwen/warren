@@ -272,4 +272,4 @@ Phase 2 will implement:
 
 ## License
 
-TBD
+MIT License - see [LICENSE](LICENSE) file for details.
