@@ -234,8 +234,6 @@ See `ROADMAP.md` for detailed planning.
 
 **Phase 2 Limitations:**
 
-- **Agent Session Persistence**: Agent sessions are stored in-memory only and are lost on Warren restart. Sessions must be re-discovered each time Warren starts. (Planned for Phase 2.1)
-
 - **Multi-Server Discovery**: Multi-server agent discovery has not been tested at scale. Current validation covers localhost only. (Planned for Phase 3)
 
 - **E2E Test Coverage**: The following components have not been validated in end-to-end testing:

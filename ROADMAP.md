@@ -68,7 +68,7 @@ This roadmap breaks the design into concrete implementation tasks with clear suc
 #### 2.1 Agent Session Registry
 - [x] Define `AgentSession` entity (logical name, server ref, tmux topology ref, created_at, last_seen_at)
 - [x] Implement agent session discovery (heuristic: detect Claude Code in pane title or content)
-- [x] Store agent session mappings in registry (AgentSessionRegistry with in-memory storage)
+- [x] Store agent session mappings in registry (.warren/registry.json with atomic writes, merge, prune)
 - [x] Add manual agent session registration (user specifies server/session/window/pane)
 - [x] Test: discover agent sessions across multiple servers (localhost tested, remote SSH support implemented)
 
