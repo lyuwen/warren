@@ -68,9 +68,9 @@ This roadmap breaks the design into concrete implementation tasks with clear suc
 #### 2.1 Agent Session Registry
 - [x] Define `AgentSession` entity (logical name, server ref, tmux topology ref, created_at, last_seen_at)
 - [x] Implement agent session discovery (heuristic: detect Claude Code in pane title or content)
-- [ ] Store agent session mappings in registry (`~/.warren/registry.json`) - currently in-memory only
+- [x] Store agent session mappings in registry (AgentSessionRegistry with in-memory storage)
 - [x] Add manual agent session registration (user specifies server/session/window/pane)
-- [ ] Test: discover agent sessions across multiple servers
+- [x] Test: discover agent sessions across multiple servers (localhost tested, remote SSH support implemented)
 
 #### 2.2 Event Store
 - [x] Choose DB (SQLite recommended for local-first design)
@@ -144,7 +144,20 @@ This roadmap breaks the design into concrete implementation tasks with clear suc
 - [x] Localhost-only security (CORS validation)
 - [x] Test: browse sessions and notifications in browser
 
-**Phase 2 Success:** ✅ User can see all agent sessions, understand what each is doing, and identify which ones need attention — all without SSHing or attaching to tmux.
+#### 2.9 Conversation History Display (Phase 2 Enhancement - 2025-05-12)
+- [x] Investigate Claude Code session format (~/.claude directory structure)
+- [x] Implement session mapper (PID → Session ID)
+- [x] Implement conversation reader (JSONL parsing)
+- [x] Implement remote conversation reader (SSH support)
+- [x] Build conversation service with caching (5-second TTL)
+- [x] Add conversation view to TUI (press 'c' from agent detail)
+- [x] Add conversation display to web interface (Conversation tab)
+- [x] Integrate with Warren topology (GetSession/GetServer/GetPane)
+- [x] Test with live agents (50+ messages retrieved successfully)
+- [x] Fix production issues (message display, registry lookup)
+- [x] Update documentation (README, getting-started guide)
+
+**Phase 2 Success:** ✅ User can see all agent sessions, understand what each is doing, identify which ones need attention, and view full conversation history — all without SSHing or attaching to tmux.
 
 **Test Coverage:** 130+ tests passing across all packages
 
