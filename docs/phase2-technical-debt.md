@@ -181,7 +181,7 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 
 ## Low Priority
 
-### 10. Conversation Cache Has Fixed 5s TTL
+### 10. ~~Conversation Cache Has Fixed 5s TTL~~ ✅ **RESOLVED**
 
 **Issue:** Conversation cache TTL is hardcoded to 5 seconds. Not configurable.
 
@@ -189,11 +189,15 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 
 **Effort:** Low (1-2 hours)
 
-**Recommendation:** Make TTL configurable via config file.
+**Resolution:** Added `CacheTTL` field to Warren Config with default of 5 seconds. Created `NewConversationServiceWithTTL()` constructor to accept custom TTL. Validation ensures TTL is positive and at most 1 hour.
 
-**Workaround:** Edit code and rebuild.
+**Resolved:** May 13, 2026
 
-**Code Location:** `internal/claude/conversation_service.go`
+**Code Location:** `internal/core/conversation_service.go` (NewConversationServiceWithTTL)
+
+**Configuration:** `internal/core/warren.go` (CacheTTL in Config)
+
+**Tests:** `internal/core/config_test.go` (TestConfigValidate_CacheTTL with 6 test cases)
 
 ---
 
@@ -213,7 +217,7 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 
 ---
 
-### 12. Registry Prune Threshold is Hardcoded
+### 12. ~~Registry Prune Threshold is Hardcoded~~ ✅ **RESOLVED**
 
 **Issue:** Registry prunes sessions older than 24 hours. Not configurable.
 
@@ -221,11 +225,15 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 
 **Effort:** Low (1-2 hours)
 
-**Recommendation:** Make threshold configurable via config file.
+**Resolution:** Added `RegistryPruneThreshold` field to Warren Config with default of 24 hours. Created `PruneWithThreshold()` method to accept custom threshold. Validation ensures threshold is positive and at least 1 hour.
 
-**Workaround:** Edit code and rebuild.
+**Resolved:** May 13, 2026
 
-**Code Location:** `internal/core/agent_session.go` (Prune method)
+**Code Location:** `internal/core/agent_session.go` (PruneWithThreshold method)
+
+**Configuration:** `internal/core/warren.go` (RegistryPruneThreshold in Config)
+
+**Tests:** `internal/core/config_test.go` (TestConfigValidate_RegistryPruneThreshold with 6 test cases)
 
 ---
 
@@ -309,7 +317,7 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 
 ---
 
-### 18. No Configuration File Validation
+### 18. ~~No Configuration File Validation~~ ✅ **RESOLVED**
 
 **Issue:** Config file parsing has minimal validation. Invalid config may cause crashes.
 
@@ -317,11 +325,23 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 
 **Effort:** Low (4-8 hours)
 
-**Recommendation:** Add config validation with clear error messages.
+**Resolution:** Added comprehensive `Validate()` method to Config struct. Validates all configuration fields with clear, actionable error messages. Checks for positive durations, valid ranges, non-empty required fields, and reasonable limits.
 
-**Workaround:** Validate config manually before starting Warren.
+**Resolved:** May 13, 2026
 
-**Code Location:** `internal/core/config.go`
+**Code Location:** `internal/core/warren.go` (Config.Validate method)
+
+**Tests:** `internal/core/config_test.go` (9 test functions with 30+ sub-tests)
+
+**Validation Rules:**
+- PollInterval: positive, >= 100ms (avoid excessive CPU)
+- MinConfidence: 0.0 to 1.0
+- DBPath: non-empty
+- ConfigDir: non-empty
+- EventRetentionPeriod: positive
+- EventPruningInterval: positive
+- CacheTTL: positive, <= 1 hour (avoid stale data)
+- RegistryPruneThreshold: positive, >= 1 hour (avoid premature pruning)
 
 ---
 
