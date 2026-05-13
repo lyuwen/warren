@@ -17,6 +17,7 @@ type ConversationService struct {
 	conversationReader *claude.ConversationReader
 	cache              *conversationCache
 	sshClients         map[string]*ssh.Client
+	cacheTTL           time.Duration
 	mu                 sync.RWMutex
 }
 
@@ -33,8 +34,13 @@ type cacheEntry struct {
 	filePath   string
 }
 
-// NewConversationService creates a new conversation service
+// NewConversationService creates a new conversation service with default cache TTL
 func NewConversationService() *ConversationService {
+	return NewConversationServiceWithTTL(5 * time.Second)
+}
+
+// NewConversationServiceWithTTL creates a new conversation service with custom cache TTL
+func NewConversationServiceWithTTL(cacheTTL time.Duration) *ConversationService {
 	return &ConversationService{
 		sessionMapper:      claude.NewSessionMapper(),
 		conversationReader: claude.NewConversationReader(),
@@ -42,6 +48,7 @@ func NewConversationService() *ConversationService {
 			entries: make(map[string]*cacheEntry),
 		},
 		sshClients: make(map[string]*ssh.Client),
+		cacheTTL:   cacheTTL,
 	}
 }
 
@@ -136,8 +143,8 @@ func (cs *ConversationService) getLocalConversation(sessionID, cwd string) ([]*c
 		return nil, err
 	}
 
-	// Cache the result
-	cs.cache.set(filePath, messages, 5*time.Second)
+	// Cache the result with configured TTL
+	cs.cache.set(filePath, messages, cs.cacheTTL)
 
 	return messages, nil
 }

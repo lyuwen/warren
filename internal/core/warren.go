@@ -26,9 +26,11 @@ type Warren struct {
 	artifactManager *ArtifactProfileManager
 
 	// Configuration
-	pollInterval  time.Duration
-	minConfidence float64
-	registryPath  string
+	pollInterval           time.Duration
+	minConfidence          float64
+	registryPath           string
+	cacheTTL               time.Duration
+	registryPruneThreshold time.Duration
 
 	// Session tracking
 	sessions        map[string]*MonitoredSession
@@ -61,24 +63,71 @@ type Config struct {
 	ConfigDir            string
 	EventRetentionPeriod time.Duration // How long to keep events (default: 30 days)
 	EventPruningInterval time.Duration // How often to prune events (default: 24 hours)
+	CacheTTL             time.Duration // How long to cache conversation files (default: 5 seconds)
+	RegistryPruneThreshold time.Duration // How old sessions must be to prune (default: 24 hours)
 }
 
 // DefaultConfig returns sensible defaults
 func DefaultConfig() *Config {
 	return &Config{
-		PollInterval:         500 * time.Millisecond,
-		MinConfidence:        0.7,
-		DBPath:               "warren.db",
-		ConfigDir:            ".warren",
-		EventRetentionPeriod: 30 * 24 * time.Hour, // 30 days
-		EventPruningInterval: 24 * time.Hour,      // daily
+		PollInterval:           500 * time.Millisecond,
+		MinConfidence:          0.7,
+		DBPath:                 "warren.db",
+		ConfigDir:              ".warren",
+		EventRetentionPeriod:   30 * 24 * time.Hour, // 30 days
+		EventPruningInterval:   24 * time.Hour,      // daily
+		CacheTTL:               5 * time.Second,     // 5 seconds
+		RegistryPruneThreshold: 24 * time.Hour,      // 24 hours
 	}
+}
+
+// Validate checks if the configuration is valid and returns an error if not
+func (c *Config) Validate() error {
+	if c.PollInterval <= 0 {
+		return fmt.Errorf("PollInterval must be positive, got %v", c.PollInterval)
+	}
+	if c.PollInterval < 100*time.Millisecond {
+		return fmt.Errorf("PollInterval must be at least 100ms to avoid excessive CPU usage, got %v", c.PollInterval)
+	}
+	if c.MinConfidence < 0 || c.MinConfidence > 1 {
+		return fmt.Errorf("MinConfidence must be between 0 and 1, got %v", c.MinConfidence)
+	}
+	if c.DBPath == "" {
+		return fmt.Errorf("DBPath cannot be empty")
+	}
+	if c.ConfigDir == "" {
+		return fmt.Errorf("ConfigDir cannot be empty")
+	}
+	if c.EventRetentionPeriod <= 0 {
+		return fmt.Errorf("EventRetentionPeriod must be positive, got %v", c.EventRetentionPeriod)
+	}
+	if c.EventPruningInterval <= 0 {
+		return fmt.Errorf("EventPruningInterval must be positive, got %v", c.EventPruningInterval)
+	}
+	if c.CacheTTL <= 0 {
+		return fmt.Errorf("CacheTTL must be positive, got %v", c.CacheTTL)
+	}
+	if c.CacheTTL > 1*time.Hour {
+		return fmt.Errorf("CacheTTL must be at most 1 hour to avoid stale data, got %v", c.CacheTTL)
+	}
+	if c.RegistryPruneThreshold <= 0 {
+		return fmt.Errorf("RegistryPruneThreshold must be positive, got %v", c.RegistryPruneThreshold)
+	}
+	if c.RegistryPruneThreshold < 1*time.Hour {
+		return fmt.Errorf("RegistryPruneThreshold must be at least 1 hour to avoid premature pruning, got %v", c.RegistryPruneThreshold)
+	}
+	return nil
 }
 
 // NewWarren creates a new Warren orchestrator
 func NewWarren(config *Config) (*Warren, error) {
 	if config == nil {
 		config = DefaultConfig()
+	}
+
+	// Validate configuration
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	// Set default ConfigDir if not provided
@@ -120,7 +169,7 @@ func NewWarren(config *Config) (*Warren, error) {
 	}
 
 	// Prune stale sessions
-	pruned := sessionRegistry.Prune()
+	pruned := sessionRegistry.PruneWithThreshold(config.RegistryPruneThreshold)
 	if pruned > 0 {
 		fmt.Printf("Pruned %d stale sessions from registry\n", pruned)
 	}
@@ -131,20 +180,22 @@ func NewWarren(config *Config) (*Warren, error) {
 	}
 
 	return &Warren{
-		tmuxClient:      tmuxClient,
-		parser:          parser,
-		stateDetector:   stateDetector,
-		eventStore:      eventStore,
-		notifEngine:     notifEngine,
-		artifactManager: artifactManager,
-		pollInterval:    config.PollInterval,
-		minConfidence:   config.MinConfidence,
-		registryPath:    registryPath,
-		sessions:        make(map[string]*MonitoredSession),
-		sessionRegistry: sessionRegistry,
-		serverRegistry:  serverRegistry,
-		ctx:             ctx,
-		cancel:          cancel,
+		tmuxClient:             tmuxClient,
+		parser:                 parser,
+		stateDetector:          stateDetector,
+		eventStore:             eventStore,
+		notifEngine:            notifEngine,
+		artifactManager:        artifactManager,
+		pollInterval:           config.PollInterval,
+		minConfidence:          config.MinConfidence,
+		registryPath:           registryPath,
+		cacheTTL:               config.CacheTTL,
+		registryPruneThreshold: config.RegistryPruneThreshold,
+		sessions:               make(map[string]*MonitoredSession),
+		sessionRegistry:        sessionRegistry,
+		serverRegistry:         serverRegistry,
+		ctx:                    ctx,
+		cancel:                 cancel,
 	}, nil
 }
 
