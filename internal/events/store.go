@@ -63,17 +63,60 @@ type StateChangeEvent struct {
 
 // Store manages event persistence
 type Store struct {
-	db *sql.DB
+	db              *sql.DB
+	pruningInterval time.Duration
+	retentionPeriod time.Duration
+	stopPruning     chan struct{}
+}
+
+// StoreConfig configures the event store
+type StoreConfig struct {
+	DBPath          string
+	RetentionPeriod time.Duration // How long to keep events (default: 30 days)
+	PruningInterval time.Duration // How often to run pruning (default: 24 hours)
+}
+
+// DefaultStoreConfig returns sensible defaults
+func DefaultStoreConfig() *StoreConfig {
+	return &StoreConfig{
+		DBPath:          "warren.db",
+		RetentionPeriod: 30 * 24 * time.Hour, // 30 days
+		PruningInterval: 24 * time.Hour,      // daily
+	}
 }
 
 // NewStore creates a new event store
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	config := DefaultStoreConfig()
+	config.DBPath = dbPath
+	return NewStoreWithConfig(config)
+}
+
+// NewStoreWithConfig creates a new event store with custom configuration
+func NewStoreWithConfig(config *StoreConfig) (*Store, error) {
+	if config == nil {
+		config = DefaultStoreConfig()
+	}
+
+	// Validate configuration
+	if config.RetentionPeriod <= 0 {
+		config.RetentionPeriod = 30 * 24 * time.Hour
+	}
+	if config.PruningInterval <= 0 {
+		config.PruningInterval = 24 * time.Hour
+	}
+
+	db, err := sql.Open("sqlite3", config.DBPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	store := &Store{db: db}
+	store := &Store{
+		db:              db,
+		retentionPeriod: config.RetentionPeriod,
+		pruningInterval: config.PruningInterval,
+		stopPruning:     make(chan struct{}),
+	}
 
 	if err := store.initialize(); err != nil {
 		db.Close()
@@ -111,6 +154,8 @@ func (s *Store) initialize() error {
 
 // Close closes the database connection
 func (s *Store) Close() error {
+	// Stop pruning job if running
+	close(s.stopPruning)
 	return s.db.Close()
 }
 
@@ -337,4 +382,61 @@ func (s *Store) Count() (int64, error) {
 		return 0, fmt.Errorf("failed to count events: %w", err)
 	}
 	return count, nil
+}
+
+// PruneOldEvents removes events older than the configured retention period
+// Returns the number of events deleted
+func (s *Store) PruneOldEvents(olderThan time.Duration) (int, error) {
+	cutoff := time.Now().Add(-olderThan)
+
+	result, err := s.db.Exec("DELETE FROM events WHERE timestamp < ?", cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("failed to prune old events: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return int(rowsAffected), nil
+}
+
+// StartPruningJob starts a background goroutine that periodically prunes old events
+// The job runs at the configured pruning interval and deletes events older than the retention period
+func (s *Store) StartPruningJob() {
+	go func() {
+		ticker := time.NewTicker(s.pruningInterval)
+		defer ticker.Stop()
+
+		// Run initial pruning immediately
+		s.runPruning()
+
+		for {
+			select {
+			case <-ticker.C:
+				s.runPruning()
+			case <-s.stopPruning:
+				return
+			}
+		}
+	}()
+}
+
+// runPruning executes a single pruning cycle with logging
+func (s *Store) runPruning() {
+	startTime := time.Now()
+
+	deleted, err := s.PruneOldEvents(s.retentionPeriod)
+	if err != nil {
+		fmt.Printf("[EventStore] Pruning failed: %v\n", err)
+		return
+	}
+
+	duration := time.Since(startTime)
+
+	if deleted > 0 {
+		fmt.Printf("[EventStore] Pruned %d events older than %v (took %v)\n",
+			deleted, s.retentionPeriod, duration)
+	}
 }

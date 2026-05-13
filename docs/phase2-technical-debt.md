@@ -84,7 +84,7 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 
 ## Medium Priority
 
-### 5. Event Store Has No Compaction/Archival
+### 5. ~~Event Store Has No Compaction/Archival~~ ✅ **RESOLVED**
 
 **Issue:** SQLite database grows indefinitely. 30-day retention policy is configured but not enforced automatically.
 
@@ -92,11 +92,26 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 
 **Effort:** Low (4-8 hours)
 
-**Recommendation:** Add background job to prune old events. Run daily or weekly.
+**Resolution:** Implemented automatic event pruning with configurable retention period and pruning interval. Background job runs periodically to delete old events. Defaults to 30-day retention with daily pruning.
 
-**Workaround:** Manual cleanup: `DELETE FROM events WHERE timestamp < datetime('now', '-30 days')`
+**Resolved:** May 13, 2026
 
-**Code Location:** `internal/events/store.go`
+**Documentation:** `docs/event-store-compaction.md`
+
+**Code Location:** `internal/events/store.go` (PruneOldEvents, StartPruningJob, runPruning methods)
+
+**Configuration:** `internal/core/warren.go` (EventRetentionPeriod, EventPruningInterval in Config)
+
+**Tests:** `internal/events/store_pruning_test.go` (8 comprehensive tests)
+
+**Features:**
+- Automatic background pruning job
+- Configurable retention period (default: 30 days)
+- Configurable pruning interval (default: 24 hours)
+- Manual pruning API available
+- Validation of configuration values
+- Logging of pruning operations
+- Graceful shutdown of pruning goroutine
 
 ---
 
@@ -373,18 +388,23 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 ## Summary
 
 **Total Items:** 23  
-**High Priority:** 4  
-**Medium Priority:** 5  
+**High Priority:** 3 (1 resolved)  
+**Medium Priority:** 4 (1 resolved)  
 **Low Priority:** 10  
 **Deferred:** 2  
 **Won't Fix:** 2  
+**Resolved:** 2
 
 **Recommended for Phase 3:**
 - Multi-server testing (#1)
-- File locking (#2)
+- ~~File locking (#2)~~ ✅ **RESOLVED**
 - E2E test infrastructure (#4)
 - Metrics/observability (#6)
 - Authentication (if network deployment needed) (#7)
+
+**Resolved in Phase 2:**
+- File locking for registry (#2) - May 13, 2026
+- Event store compaction (#5) - May 13, 2026
 
 **Can Wait:**
 - Most low-priority items can be addressed as user demand dictates
@@ -393,4 +413,5 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 ---
 
 *Document created: May 13, 2026*  
+*Last updated: May 13, 2026*  
 *Phase 2 status: Production ready with known limitations*

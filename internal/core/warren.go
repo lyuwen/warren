@@ -55,19 +55,23 @@ type MonitoredSession struct {
 
 // Config configures Warren behavior
 type Config struct {
-	PollInterval  time.Duration
-	MinConfidence float64
-	DBPath        string
-	ConfigDir     string
+	PollInterval         time.Duration
+	MinConfidence        float64
+	DBPath               string
+	ConfigDir            string
+	EventRetentionPeriod time.Duration // How long to keep events (default: 30 days)
+	EventPruningInterval time.Duration // How often to prune events (default: 24 hours)
 }
 
 // DefaultConfig returns sensible defaults
 func DefaultConfig() *Config {
 	return &Config{
-		PollInterval:  500 * time.Millisecond,
-		MinConfidence: 0.7,
-		DBPath:        "warren.db",
-		ConfigDir:     ".warren",
+		PollInterval:         500 * time.Millisecond,
+		MinConfidence:        0.7,
+		DBPath:               "warren.db",
+		ConfigDir:            ".warren",
+		EventRetentionPeriod: 30 * 24 * time.Hour, // 30 days
+		EventPruningInterval: 24 * time.Hour,      // daily
 	}
 }
 
@@ -82,11 +86,19 @@ func NewWarren(config *Config) (*Warren, error) {
 		config.ConfigDir = ".warren"
 	}
 
-	// Initialize event store
-	eventStore, err := events.NewStore(config.DBPath)
+	// Initialize event store with retention configuration
+	storeConfig := &events.StoreConfig{
+		DBPath:          config.DBPath,
+		RetentionPeriod: config.EventRetentionPeriod,
+		PruningInterval: config.EventPruningInterval,
+	}
+	eventStore, err := events.NewStoreWithConfig(storeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event store: %w", err)
 	}
+
+	// Start background pruning job
+	eventStore.StartPruningJob()
 
 	// Initialize components
 	tmuxClient := tmux.NewClient(tmux.NewLocalExecutor())
