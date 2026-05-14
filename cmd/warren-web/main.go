@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -17,18 +16,28 @@ import (
 func main() {
 	// Parse command-line flags
 	addr := flag.String("addr", ":8080", "HTTP server address")
-	dbPath := flag.String("db", "warren.db", "Database path")
+	dbPath := flag.String("db", "", "Database path (default: ~/.warren/warren.db)")
 	pollInterval := flag.Duration("poll", 500*time.Millisecond, "Polling interval")
 	minConfidence := flag.Float64("confidence", 0.7, "Minimum confidence for state transitions")
 	flag.Parse()
 
-	// Create Warren orchestrator
-	warrenConfig := &core.Config{
-		PollInterval:  *pollInterval,
-		MinConfidence: *minConfidence,
-		DBPath:        *dbPath,
-		ConfigDir:     ".warren",
+	// Set default DB path if not provided
+	if *dbPath == "" {
+		*dbPath = os.ExpandEnv("$HOME/.warren/warren.db")
 	}
+
+	// Ensure .warren directory exists
+	warrenDir := os.ExpandEnv("$HOME/.warren")
+	if err := os.MkdirAll(warrenDir, 0755); err != nil {
+		log.Fatalf("Failed to create Warren directory: %v", err)
+	}
+
+	// Create Warren orchestrator with defaults, then override from flags
+	warrenConfig := core.DefaultConfig()
+	warrenConfig.PollInterval = *pollInterval
+	warrenConfig.MinConfidence = *minConfidence
+	warrenConfig.DBPath = *dbPath
+	warrenConfig.ConfigDir = warrenDir
 
 	warren, err := core.NewWarren(warrenConfig)
 	if err != nil {
@@ -94,40 +103,58 @@ func discoverAndRegisterSessions(warren *core.Warren) error {
 	// Use the discovery service to find agent sessions
 	discoveryService := core.NewAgentDiscovery(tmuxClient)
 
-	// Get topology (use "localhost" as server name)
-	topology, err := tmuxClient.DiscoverTopology("localhost")
-	if err != nil {
-		return fmt.Errorf("failed to discover topology: %w", err)
-	}
-
-	// Discover all agent sessions
-	results, err := discoveryService.DiscoverAll(topology, 0.7)
-	if err != nil {
-		return fmt.Errorf("failed to discover sessions: %w", err)
-	}
-
-	if len(results) == 0 {
-		log.Println("No agent sessions discovered")
+	// Get all servers from the registry
+	servers := warren.GetServerRegistry().List()
+	if len(servers) == 0 {
+		log.Println("No servers configured. Add servers to ~/.warren/servers.yaml")
 		return nil
 	}
 
-	// Register each discovered session
-	for _, result := range results {
-		session := result.ToAgentSession()
+	totalSessions := 0
 
-		// Register in both old and new systems for compatibility
-		if err := warren.AddSession(session.ID, session.TmuxPaneID); err != nil {
-			log.Printf("Warning: Failed to register session %s: %v", session.ID, err)
+	// Discover sessions on each server
+	for _, server := range servers {
+		log.Printf("Discovering sessions on server: %s (%s)", server.Name, server.Host)
+
+		// Get topology for this server
+		topology, err := tmuxClient.DiscoverTopology(server.Name)
+		if err != nil {
+			log.Printf("Warning: Failed to discover topology on %s: %v", server.Name, err)
 			continue
 		}
 
-		// Also register in the new AgentSessionRegistry
-		if err := warren.RegisterAgentSession(session); err != nil {
-			log.Printf("Warning: Failed to register session in registry %s: %v", session.ID, err)
+		// Discover all agent sessions on this server
+		results, err := discoveryService.DiscoverAll(topology, 0.7)
+		if err != nil {
+			log.Printf("Warning: Failed to discover sessions on %s: %v", server.Name, err)
+			continue
 		}
 
-		log.Printf("Registered agent session: %s (pane: %s, type: %s)", session.ID, session.TmuxPaneID, session.AgentType)
+		if len(results) == 0 {
+			log.Printf("No agent sessions found on %s", server.Name)
+			continue
+		}
+
+		// Register each discovered session
+		for _, result := range results {
+			session := result.ToAgentSession()
+
+			// Register in both old and new systems for compatibility
+			if err := warren.AddSession(session.ID, session.TmuxPaneID); err != nil {
+				log.Printf("Warning: Failed to register session %s: %v", session.ID, err)
+				continue
+			}
+
+			// Also register in the new AgentSessionRegistry
+			if err := warren.RegisterAgentSession(session); err != nil {
+				log.Printf("Warning: Failed to register session in registry %s: %v", session.ID, err)
+			}
+
+			log.Printf("Registered agent session: %s (pane: %s, type: %s)", session.ID, session.TmuxPaneID, session.AgentType)
+			totalSessions++
+		}
 	}
 
+	log.Printf("Total sessions discovered: %d", totalSessions)
 	return nil
 }

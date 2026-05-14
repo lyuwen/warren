@@ -373,3 +373,8 @@ func (w *Warren) GetTmuxClient() *tmux.Client {
 	return w.tmuxClient
 }
 
+// GetServerRegistry returns the server registry
+func (w *Warren) GetServerRegistry() *ServerRegistry {
+	return w.serverRegistry
+}
+

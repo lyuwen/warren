@@ -1,0 +1,41 @@
+# Warren Server Configuration
+# Place this file at ~/.warren/servers.yaml
+
+servers:
+  # Local machine (automatically added if not present)
+  - name: "localhost"
+    host: "localhost"
+    kind: "local"
+
+  # Remote server examples
+  - name: "production-server"
+    host: "prod.example.com"
+    user: "your-username"
+    port: 22
+    kind: "remote"
+    # Optional SSH options
+    ssh_options:
+      IdentityFile: "~/.ssh/id_rsa"
+      StrictHostKeyChecking: "no"
+
+  - name: "dev-server"
+    host: "dev.example.com"
+    user: "your-username"
+    port: 22
+    kind: "remote"
+
+  - name: "staging"
+    host: "staging.example.com"
+    user: "deploy"
+    port: 2222
+    kind: "remote"
+    ssh_options:
+      IdentityFile: "~/.ssh/staging_key"
+
+# Notes:
+# - The 'name' field is used to identify the server in Warren
+# - For local servers, set kind: "local" and host: "localhost"
+# - For remote servers, set kind: "remote" and provide host, user, and port
+# - SSH key-based authentication is required for remote servers
+# - Make sure you can SSH to remote servers without password prompts
+# - Test connection: ssh user@host -p port
