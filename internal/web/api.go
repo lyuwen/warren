@@ -18,15 +18,35 @@ func (s *Server) handleGetServers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For now, return localhost as the only server
-	// In the future, this will query the server registry
-	servers := []map[string]interface{}{
-		{
-			"name":        "localhost",
-			"host":        "localhost",
-			"agent_count": len(s.warren.GetAllSessions()),
-			"status":      "online",
-		},
+	// Get all servers from the registry
+	serverRegistry := s.warren.GetServerRegistry()
+	registeredServers := serverRegistry.List()
+
+	// Get all sessions to count agents per server
+	allSessions := s.warren.GetAllSessions()
+
+	// Count agents per server
+	agentCountByServer := make(map[string]int)
+	for _, session := range allSessions {
+		// Extract server name from agent ID (format: server:session:window.pane)
+		parts := strings.Split(session.AgentID, ":")
+		if len(parts) > 0 {
+			serverName := parts[0]
+			agentCountByServer[serverName]++
+		}
+	}
+
+	// Build response
+	servers := make([]map[string]interface{}, 0, len(registeredServers))
+	for _, server := range registeredServers {
+		agentCount := agentCountByServer[server.Name]
+		servers = append(servers, map[string]interface{}{
+			"name":        server.Name,
+			"host":        server.Host,
+			"kind":        server.Kind,
+			"agent_count": agentCount,
+			"status":      "online", // TODO: implement actual status checking
+		})
 	}
 
 	respondJSON(w, http.StatusOK, servers)

@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lfu/warren/internal/core"
+	"github.com/lfu/warren/internal/tmux"
 	"github.com/lfu/warren/internal/tui"
 )
 
@@ -56,12 +57,6 @@ func main() {
 
 // discoverAndRegisterSessions discovers tmux sessions and registers them with Warren
 func discoverAndRegisterSessions(warren *core.Warren) error {
-	// Create tmux client for discovery
-	tmuxClient := warren.GetTmuxClient()
-
-	// Use the discovery service to find agent sessions
-	discoveryService := core.NewAgentDiscovery(tmuxClient)
-
 	// Get all servers from the registry
 	servers := warren.GetServerRegistry().List()
 	if len(servers) == 0 {
@@ -74,6 +69,22 @@ func discoverAndRegisterSessions(warren *core.Warren) error {
 	// Discover sessions on each server
 	for _, server := range servers {
 		log.Printf("Discovering sessions on server: %s (%s)", server.Name, server.Host)
+
+		// Create appropriate tmux client for this server
+		var tmuxClient *tmux.Client
+		if server.IsLocal() {
+			// Use local executor for local server
+			tmuxClient = tmux.NewClient(tmux.NewLocalExecutor())
+		} else {
+			// Use remote executor for remote servers
+			if server.Port == 0 {
+				server.Port = 22 // Default SSH port
+			}
+			tmuxClient = tmux.NewClient(tmux.NewRemoteExecutor(server.User, server.Host, server.Port))
+		}
+
+		// Use the discovery service to find agent sessions
+		discoveryService := core.NewAgentDiscovery(tmuxClient)
 
 		// Get topology for this server
 		topology, err := tmuxClient.DiscoverTopology(server.Name)
