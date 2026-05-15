@@ -41,16 +41,46 @@ func (rr *RemoteReader) GetSessionID(pid int) (string, error) {
 	// Try to get parent session ID from process args
 	cmd := fmt.Sprintf("cat /proc/%d/cmdline 2>/dev/null | tr '\\0' '\\n' | grep -A1 '^--parent-session-id$' | tail -1", pid)
 	output, err := rr.runCommand(cmd)
+	if err == nil {
+		sessionID := strings.TrimSpace(output)
+		if sessionID != "" {
+			return sessionID, nil
+		}
+	}
+
+	// If still not found, search child processes (pane PID might be shell, Claude is child)
+	return rr.searchChildProcesses(pid)
+}
+
+// searchChildProcesses searches for Claude processes under the given PID
+func (rr *RemoteReader) searchChildProcesses(parentPID int) (string, error) {
+	// Find all child processes
+	cmd := fmt.Sprintf("pgrep -P %d", parentPID)
+	output, err := rr.runCommand(cmd)
 	if err != nil {
-		return "", fmt.Errorf("no session ID found for remote PID %d: %w", pid, err)
+		return "", fmt.Errorf("no child processes found for PID %d", parentPID)
 	}
 
-	sessionID := strings.TrimSpace(output)
-	if sessionID == "" {
-		return "", fmt.Errorf("no session ID found for remote PID %d", pid)
+	// Try each child process
+	childPIDs := strings.Split(strings.TrimSpace(output), "\n")
+	for _, pidStr := range childPIDs {
+		if pidStr == "" {
+			continue
+		}
+
+		var childPID int
+		if _, err := fmt.Sscanf(pidStr, "%d", &childPID); err != nil {
+			continue
+		}
+
+		// Try to get session ID from this child
+		sessionID, err := rr.GetSessionID(childPID)
+		if err == nil {
+			return sessionID, nil
+		}
 	}
 
-	return sessionID, nil
+	return "", fmt.Errorf("no session ID found for PID %d or its children", parentPID)
 }
 
 // GetCWD returns the working directory for a remote PID
