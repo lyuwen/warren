@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 // LocalExecutor executes commands on the local machine
@@ -47,16 +48,25 @@ func NewRemoteExecutor(user, host string, port int) *RemoteExecutor {
 
 // Execute runs a command remotely via SSH and returns its output
 func (e *RemoteExecutor) Execute(command string, args ...string) (string, error) {
-	// Build SSH command with proper quoting
-	// We need to quote all arguments to preserve special characters through SSH
+	// Build the full command string with proper quoting
+	// We need to pass the entire command as a single string to SSH
+	// to prevent the remote shell from interpreting special characters
+	fullCmd := command
+	for _, arg := range args {
+		// Quote arguments that contain special characters or spaces
+		if needsQuoting(arg) {
+			fullCmd += fmt.Sprintf(" \"%s\"", escapeQuotes(arg))
+		} else {
+			fullCmd += " " + arg
+		}
+	}
+
+	// Execute via SSH with the full command as a single argument
 	sshArgs := []string{
 		"-p", fmt.Sprintf("%d", e.port),
 		fmt.Sprintf("%s@%s", e.user, e.host),
-		command,
+		fullCmd,
 	}
-
-	// Add each argument as a separate SSH argument (SSH will handle the quoting)
-	sshArgs = append(sshArgs, args...)
 
 	cmd := exec.Command("ssh", sshArgs...)
 	var stdout, stderr bytes.Buffer
@@ -71,11 +81,21 @@ func (e *RemoteExecutor) Execute(command string, args ...string) (string, error)
 	return stdout.String(), nil
 }
 
-func containsSpace(s string) bool {
+// needsQuoting returns true if the argument contains characters that need quoting
+func needsQuoting(s string) bool {
+	// Check for special shell characters
+	specialChars := " \t\n#{}[]()$`\"'\\|&;<>*?!"
 	for _, c := range s {
-		if c == ' ' || c == '\t' || c == '\n' {
-			return true
+		for _, special := range specialChars {
+			if c == special {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// escapeQuotes escapes double quotes in a string
+func escapeQuotes(s string) string {
+	return strings.ReplaceAll(s, "\"", "\\\"")
 }
