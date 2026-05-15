@@ -47,23 +47,16 @@ func NewRemoteExecutor(user, host string, port int) *RemoteExecutor {
 
 // Execute runs a command remotely via SSH and returns its output
 func (e *RemoteExecutor) Execute(command string, args ...string) (string, error) {
-	// Build the full command string
-	fullCmd := command
-	for _, arg := range args {
-		// Simple quoting - may need to be more sophisticated
-		if containsSpace(arg) {
-			fullCmd += fmt.Sprintf(" '%s'", arg)
-		} else {
-			fullCmd += " " + arg
-		}
-	}
-
-	// Execute via SSH
+	// Build SSH command with proper quoting
+	// We need to quote all arguments to preserve special characters through SSH
 	sshArgs := []string{
 		"-p", fmt.Sprintf("%d", e.port),
 		fmt.Sprintf("%s@%s", e.user, e.host),
-		fullCmd,
+		command,
 	}
+
+	// Add each argument as a separate SSH argument (SSH will handle the quoting)
+	sshArgs = append(sshArgs, args...)
 
 	cmd := exec.Command("ssh", sshArgs...)
 	var stdout, stderr bytes.Buffer
