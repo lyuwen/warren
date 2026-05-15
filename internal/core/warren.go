@@ -18,12 +18,14 @@ import (
 // Warren is the main orchestrator that coordinates monitoring of agent sessions
 type Warren struct {
 	// Core components
-	tmuxClient      *tmux.Client
-	parser          *parser.ActivityParser
-	stateDetector   *state.StateDetector
-	eventStore      *events.Store
-	notifEngine     *notifications.Engine
-	artifactManager *ArtifactProfileManager
+	tmuxClient           *tmux.Client
+	parser               *parser.ActivityParser
+	stateDetector        *state.StateDetector
+	conversationDetector *state.ConversationDetector
+	conversationService  *ConversationService
+	eventStore           *events.Store
+	notifEngine          *notifications.Engine
+	artifactManager      *ArtifactProfileManager
 
 	// Configuration
 	pollInterval  time.Duration
@@ -92,6 +94,8 @@ func NewWarren(config *Config) (*Warren, error) {
 	tmuxClient := tmux.NewClient(tmux.NewLocalExecutor())
 	parser := parser.NewActivityParser()
 	stateDetector := state.NewStateDetector()
+	conversationDetector := state.NewConversationDetector()
+	conversationService := NewConversationService()
 	notifEngine := notifications.NewEngine(eventStore)
 	artifactManager := NewArtifactProfileManager()
 
@@ -119,20 +123,22 @@ func NewWarren(config *Config) (*Warren, error) {
 	}
 
 	return &Warren{
-		tmuxClient:      tmuxClient,
-		parser:          parser,
-		stateDetector:   stateDetector,
-		eventStore:      eventStore,
-		notifEngine:     notifEngine,
-		artifactManager: artifactManager,
-		pollInterval:    config.PollInterval,
-		minConfidence:   config.MinConfidence,
-		registryPath:    registryPath,
-		sessions:        make(map[string]*MonitoredSession),
-		sessionRegistry: sessionRegistry,
-		serverRegistry:  serverRegistry,
-		ctx:             ctx,
-		cancel:          cancel,
+		tmuxClient:           tmuxClient,
+		parser:               parser,
+		stateDetector:        stateDetector,
+		conversationDetector: conversationDetector,
+		conversationService:  conversationService,
+		eventStore:           eventStore,
+		notifEngine:          notifEngine,
+		artifactManager:      artifactManager,
+		pollInterval:         config.PollInterval,
+		minConfidence:        config.MinConfidence,
+		registryPath:         registryPath,
+		sessions:             make(map[string]*MonitoredSession),
+		sessionRegistry:      sessionRegistry,
+		serverRegistry:       serverRegistry,
+		ctx:                  ctx,
+		cancel:               cancel,
 	}, nil
 }
 
@@ -218,79 +224,126 @@ func (w *Warren) monitorSession(agentID string) {
 
 // pollSession performs a single poll cycle for a session
 func (w *Warren) pollSession(agentID string) error {
-	w.mu.RLock()
-	session, exists := w.sessions[agentID]
-	w.mu.RUnlock()
-
-	if !exists {
-		return fmt.Errorf("session %s not found", agentID)
-	}
-
-	// Step 1: Capture pane content
-	captureResult, err := w.tmuxClient.GetRecentContent(session.PaneID, 500)
+	// Get session from registry
+	session, err := w.sessionRegistry.Get(agentID)
 	if err != nil {
-		return fmt.Errorf("failed to capture pane: %w", err)
+		return fmt.Errorf("session %s not found: %w", agentID, err)
 	}
 
-	// Skip if content hasn't changed
-	if captureResult.Content == session.LastContent {
+	// Get server info
+	server, err := w.GetServer(session.ServerName)
+	if err != nil {
+		return fmt.Errorf("failed to get server: %w", err)
+	}
+
+	// Get pane info
+	pane, err := w.GetPane(session, server)
+	if err != nil {
+		return fmt.Errorf("failed to get pane: %w", err)
+	}
+
+	// Create appropriate tmux client for this server
+	var tmuxClient *tmux.Client
+	if server.IsLocal() {
+		tmuxClient = w.tmuxClient
+	} else {
+		if server.Port == 0 {
+			server.Port = 22
+		}
+		tmuxClient = tmux.NewClient(tmux.NewRemoteExecutor(server.User, server.Host, server.Port))
+	}
+
+	// Capture pane content for real-time state detection
+	var paneContent string
+	captureResult, err := tmuxClient.GetRecentContent(session.TmuxPaneID, 100)
+	if err == nil {
+		paneContent = captureResult.Content
+	}
+
+	// Get conversation history (last 10 messages should be enough)
+	messages, err := w.conversationService.GetRecentMessages(session, server, pane, 10)
+	if err != nil {
+		// If we can't get conversation history, fall back to pane-only detection
+		if paneContent != "" {
+			detectionResult := w.conversationDetector.DetectFromConversationAndPane(nil, paneContent)
+			w.updateSessionStateIfChanged(agentID, detectionResult.State, detectionResult.Confidence)
+		} else {
+			w.updateSessionState(agentID, StateUnknown, 0.3)
+		}
 		return nil
 	}
 
-	// Step 2: Parse activities
-	parseResult, err := w.parser.Parse(agentID, captureResult.Content)
-	if err != nil {
-		return fmt.Errorf("failed to parse content: %w", err)
-	}
+	// Detect state from conversation + pane content
+	detectionResult := w.conversationDetector.DetectFromConversationAndPane(messages, paneContent)
 
-	// Step 3: Store activities
-	for _, activity := range parseResult.Activities {
-		if err := w.eventStore.AppendActivity(activity); err != nil {
-			return fmt.Errorf("failed to store activity: %w", err)
-		}
+	// Update state if confidence is high enough
+	w.updateSessionStateIfChanged(agentID, detectionResult.State, detectionResult.Confidence)
 
-		// Update artifact profile
-		if err := w.artifactManager.ProcessActivity(activity); err != nil {
-			// Log but don't fail on artifact processing errors
-			continue
-		}
-	}
+	return nil
+}
 
-	// Step 4: Detect state from activities
-	recentActivities, err := w.eventStore.GetRecentActivities(agentID, 20)
-	if err != nil {
-		return fmt.Errorf("failed to get recent activities: %w", err)
-	}
+// updateSessionStateIfChanged updates session state if it changed and confidence is high enough
+func (w *Warren) updateSessionStateIfChanged(agentID string, newState AgentState, confidence float64) {
+	w.mu.RLock()
+	oldSession, exists := w.sessions[agentID]
+	w.mu.RUnlock()
 
-	detectionResult := w.stateDetector.DetectFromActivities(recentActivities)
-
-	// Step 5: Check for state transition
-	if w.stateDetector.ShouldTransition(session.CurrentState, detectionResult, w.minConfidence) {
-		oldState := session.CurrentState
-		newState := detectionResult.State
-
-		// Update session state
+	if !exists {
+		// Create monitored session if it doesn't exist
 		w.mu.Lock()
-		session.CurrentState = newState
-		session.LastContent = captureResult.Content
-		session.LastPollTime = time.Now()
-		session.ConsecutiveErrors = 0
+		w.sessions[agentID] = &MonitoredSession{
+			AgentID:      agentID,
+			PaneID:       "",
+			CurrentState: newState,
+			LastPollTime: time.Now(),
+		}
 		w.mu.Unlock()
 
-		// Process state change through notification engine (convert to string)
+		// Update registry
+		w.sessionRegistry.UpdateState(agentID, newState)
+		return
+	}
+
+	oldState := oldSession.CurrentState
+
+	// Update state if it changed and confidence is high enough
+	if oldState != newState && confidence >= w.minConfidence {
+		// Update session state
+		w.mu.Lock()
+		oldSession.CurrentState = newState
+		oldSession.LastPollTime = time.Now()
+		oldSession.ConsecutiveErrors = 0
+		w.mu.Unlock()
+
+		// Update registry
+		if err := w.sessionRegistry.UpdateState(agentID, newState); err != nil {
+			// Log but don't fail
+			return
+		}
+
+		// Process state change through notification engine
 		if err := w.notifEngine.ProcessStateChange(agentID, string(oldState), string(newState)); err != nil {
-			return fmt.Errorf("failed to process state change: %w", err)
+			// Log but don't fail
+			return
 		}
 	} else {
 		// No state transition, just update metadata
 		w.mu.Lock()
-		session.LastContent = captureResult.Content
-		session.LastPollTime = time.Now()
-		session.ConsecutiveErrors = 0
+		oldSession.LastPollTime = time.Now()
+		oldSession.ConsecutiveErrors = 0
 		w.mu.Unlock()
 	}
+}
 
-	return nil
+// updateSessionState is a helper to update session state
+func (w *Warren) updateSessionState(agentID string, state AgentState, confidence float64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if session, exists := w.sessions[agentID]; exists {
+		session.CurrentState = state
+		session.LastPollTime = time.Now()
+	}
 }
 
 // handlePollError handles errors during polling
