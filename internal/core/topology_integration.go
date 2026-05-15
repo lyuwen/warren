@@ -64,26 +64,31 @@ func (w *Warren) GetServer(serverName string) (*Server, error) {
 
 // GetPane retrieves a tmux pane object from an agent session
 func (w *Warren) GetPane(session *AgentSession, server *Server) (*tmux.Pane, error) {
-	// For local servers, we can query tmux directly
+	// Create appropriate tmux client for this server
+	var tmuxClient *tmux.Client
 	if server.IsLocal() {
-		// Discover topology to find the pane
-		topology, err := w.tmuxClient.DiscoverTopology(server.Name)
-		if err != nil {
-			return nil, fmt.Errorf("failed to discover topology: %w", err)
+		tmuxClient = w.tmuxClient
+	} else {
+		// Create remote executor for remote servers
+		if server.Port == 0 {
+			server.Port = 22
 		}
-
-		// Find the pane by ID
-		pane, _, _, err := topology.FindPane(session.TmuxPaneID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to find pane %s: %w", session.TmuxPaneID, err)
-		}
-
-		return pane, nil
+		tmuxClient = tmux.NewClient(tmux.NewRemoteExecutor(server.User, server.Host, server.Port))
 	}
 
-	// For remote servers, we need SSH support
-	// TODO: Implement remote pane retrieval via SSH
-	return nil, fmt.Errorf("remote pane retrieval not yet implemented")
+	// Discover topology to find the pane
+	topology, err := tmuxClient.DiscoverTopology(server.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover topology: %w", err)
+	}
+
+	// Find the pane by ID
+	pane, _, _, err := topology.FindPane(session.TmuxPaneID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find pane %s: %w", session.TmuxPaneID, err)
+	}
+
+	return pane, nil
 }
 
 // GetPaneByID retrieves a tmux pane by its pane ID

@@ -2,7 +2,9 @@ package core
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -48,7 +50,7 @@ func NewConversationService() *ConversationService {
 // GetConversationHistory returns the full conversation history for an agent
 func (cs *ConversationService) GetConversationHistory(session *AgentSession, server *Server, pane *tmux.Pane) ([]*claude.Message, error) {
 	// Get session ID and CWD
-	sessionID, cwd, err := cs.getSessionInfo(pane)
+	sessionID, cwd, err := cs.getSessionInfo(server, pane)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +98,8 @@ func (cs *ConversationService) SubscribeToUpdates(agentID string) <-chan string 
 }
 
 // getSessionInfo extracts session ID and CWD from pane
-func (cs *ConversationService) getSessionInfo(pane *tmux.Pane) (string, string, error) {
+// Handles both local and remote sessions
+func (cs *ConversationService) getSessionInfo(server *Server, pane *tmux.Pane) (string, string, error) {
 	if pane == nil {
 		return "", "", fmt.Errorf("no pane information")
 	}
@@ -106,6 +109,33 @@ func (cs *ConversationService) getSessionInfo(pane *tmux.Pane) (string, string, 
 		return "", "", fmt.Errorf("no PID available")
 	}
 
+	// Handle remote sessions
+	if server.Kind == ServerKindRemote {
+		// Create SSH connection on-demand
+		client, err := createSSHClient(server)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to create SSH connection: %w", err)
+		}
+		defer client.Close()
+
+		remoteReader := claude.NewRemoteReader(client, server.Host)
+
+		// Get session ID
+		sessionID, err := remoteReader.GetSessionID(pid)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to get remote session ID: %w", err)
+		}
+
+		// Get CWD
+		cwd, err := remoteReader.GetCWD(pid)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to get remote CWD: %w", err)
+		}
+
+		return sessionID, cwd, nil
+	}
+
+	// Handle local sessions
 	// Get session ID
 	sessionID, err := cs.sessionMapper.GetSessionID(pid)
 	if err != nil {
@@ -144,16 +174,74 @@ func (cs *ConversationService) getLocalConversation(sessionID, cwd string) ([]*c
 
 // getRemoteConversation reads conversation from remote server via SSH
 func (cs *ConversationService) getRemoteConversation(server *Server, sessionID, cwd string) ([]*claude.Message, error) {
-	cs.mu.RLock()
-	client, ok := cs.sshClients[server.Host]
-	cs.mu.RUnlock()
-
-	if !ok {
-		return nil, fmt.Errorf("no SSH connection for host %s", server.Host)
+	// Create SSH connection on-demand
+	client, err := createSSHClient(server)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SSH connection: %w", err)
 	}
+	defer client.Close()
 
 	remoteReader := claude.NewRemoteReader(client, server.Host)
 	return remoteReader.ReadConversation(sessionID, cwd)
+}
+
+// createSSHClient creates an SSH client for a remote server
+func createSSHClient(server *Server) (*ssh.Client, error) {
+	// Get SSH key path from server config or use default
+	keyPath := ""
+	if server.SSHOptions != nil {
+		if identityFile, ok := server.SSHOptions["IdentityFile"]; ok {
+			keyPath = identityFile
+		}
+	}
+
+	// Default to ~/.ssh/id_rsa if not specified
+	if keyPath == "" {
+		home := os.Getenv("HOME")
+		keyPath = filepath.Join(home, ".ssh", "id_rsa")
+	}
+
+	// Expand ~ in path
+	if keyPath[0] == '~' {
+		home := os.Getenv("HOME")
+		keyPath = filepath.Join(home, keyPath[1:])
+	}
+
+	// Read private key
+	key, err := ioutil.ReadFile(keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read SSH key from %s: %w", keyPath, err)
+	}
+
+	// Parse private key
+	signer, err := ssh.ParsePrivateKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse SSH key: %w", err)
+	}
+
+	// Create SSH client config
+	config := &ssh.ClientConfig{
+		User: server.User,
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: Use proper host key verification
+		Timeout:         10 * time.Second,
+	}
+
+	// Connect to SSH server
+	port := server.Port
+	if port == 0 {
+		port = 22
+	}
+
+	addr := fmt.Sprintf("%s:%d", server.Host, port)
+	client, err := ssh.Dial("tcp", addr, config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to %s: %w", addr, err)
+	}
+
+	return client, nil
 }
 
 // RegisterSSHClient registers an SSH client for a remote host
