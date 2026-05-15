@@ -72,6 +72,7 @@ func (d *ConversationDetector) detectFromPaneContent(content string) *DetectionR
 	lowerContent := strings.ToLower(content)
 
 	// Check for active thinking/execution indicators (present tense, active)
+	// These are phrases that indicate the agent is currently working
 	activeIndicators := []string{
 		"cultivating",
 		"thinking…",
@@ -81,10 +82,6 @@ func (d *ConversationDetector) detectFromPaneContent(content string) *DetectionR
 		"running 1 shell command",
 		"running 1 tool",
 		"executing tool",
-		"⏳",
-		"⌛",
-		"◐", "◓", "◑", "◒", // Spinner characters
-		"✶",
 	}
 
 	for _, indicator := range activeIndicators {
@@ -94,6 +91,40 @@ func (d *ConversationDetector) detectFromPaneContent(content string) *DetectionR
 				Confidence: 0.95,
 				Signals:    []string{"pane shows active indicator: " + indicator},
 				Timestamp:  now,
+			}
+		}
+	}
+
+	// Check for spinner characters only if they appear near active text
+	// This avoids false positives from static icons in task lists
+	spinnerChars := []string{"⏳", "⌛", "◐", "◓", "◑", "◒"}
+	for _, spinner := range spinnerChars {
+		if strings.Contains(content, spinner) {
+			// Check if there's active text nearby (within 100 chars)
+			idx := strings.Index(content, spinner)
+			if idx >= 0 {
+				start := idx - 50
+				if start < 0 {
+					start = 0
+				}
+				end := idx + 50
+				if end > len(content) {
+					end = len(content)
+				}
+				nearby := strings.ToLower(content[start:end])
+
+				// Check for active verbs near the spinner
+				activeVerbs := []string{"cultivating", "thinking", "reasoning", "analyzing", "processing"}
+				for _, verb := range activeVerbs {
+					if strings.Contains(nearby, verb) {
+						return &DetectionResult{
+							State:      types.StateExecuting,
+							Confidence: 0.95,
+							Signals:    []string{"pane shows active spinner with verb: " + verb},
+							Timestamp:  now,
+						}
+					}
+				}
 			}
 		}
 	}
