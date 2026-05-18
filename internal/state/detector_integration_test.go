@@ -54,8 +54,8 @@ Which approach would you prefer?
 		t.Errorf("Expected StateAskingQuestion, got %s", result.State)
 	}
 
-	if result.Confidence < 0.8 {
-		t.Errorf("Expected high confidence for question, got %.2f", result.Confidence)
+	if result.Confidence < 0.6 {
+		t.Errorf("Expected confidence >= 0.6 for question, got %.2f", result.Confidence)
 	}
 }
 

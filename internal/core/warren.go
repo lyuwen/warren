@@ -26,9 +26,11 @@ type Warren struct {
 	artifactManager *ArtifactProfileManager
 
 	// Configuration
-	pollInterval  time.Duration
-	minConfidence float64
-	registryPath  string
+	pollInterval           time.Duration
+	minConfidence          float64
+	registryPath           string
+	cacheTTL               time.Duration
+	registryPruneThreshold time.Duration
 
 	// Session tracking
 	sessions        map[string]*MonitoredSession
@@ -44,31 +46,81 @@ type Warren struct {
 
 // MonitoredSession represents an agent session being monitored
 type MonitoredSession struct {
-	AgentID       string
-	PaneID        string
-	CurrentState  AgentState
-	LastPollTime  time.Time
-	LastContent   string
-	ErrorCount    int
+	AgentID           string
+	PaneID            string
+	CurrentState      AgentState
+	LastPollTime      time.Time
+	LastContent       string
+	ErrorCount        int
 	ConsecutiveErrors int
+	ServerName        string
+	WorkingDir        string
+	LastStateChange   time.Time
+	TmuxClient        *tmux.Client // Per-session tmux client (local or remote)
 }
 
 // Config configures Warren behavior
 type Config struct {
-	PollInterval  time.Duration
-	MinConfidence float64
-	DBPath        string
-	ConfigDir     string
+	PollInterval         time.Duration
+	MinConfidence        float64
+	DBPath               string
+	ConfigDir            string
+	EventRetentionPeriod time.Duration // How long to keep events (default: 30 days)
+	EventPruningInterval time.Duration // How often to prune events (default: 24 hours)
+	CacheTTL             time.Duration // How long to cache conversation files (default: 5 seconds)
+	RegistryPruneThreshold time.Duration // How old sessions must be to prune (default: 24 hours)
 }
 
 // DefaultConfig returns sensible defaults
 func DefaultConfig() *Config {
 	return &Config{
-		PollInterval:  500 * time.Millisecond,
-		MinConfidence: 0.7,
-		DBPath:        "warren.db",
-		ConfigDir:     ".warren",
+		PollInterval:           500 * time.Millisecond,
+		MinConfidence:          0.7,
+		DBPath:                 "warren.db",
+		ConfigDir:              ".warren",
+		EventRetentionPeriod:   30 * 24 * time.Hour, // 30 days
+		EventPruningInterval:   24 * time.Hour,      // daily
+		CacheTTL:               5 * time.Second,     // 5 seconds
+		RegistryPruneThreshold: 24 * time.Hour,      // 24 hours
 	}
+}
+
+// Validate checks if the configuration is valid and returns an error if not
+func (c *Config) Validate() error {
+	if c.PollInterval <= 0 {
+		return fmt.Errorf("PollInterval must be positive, got %v", c.PollInterval)
+	}
+	if c.PollInterval < 100*time.Millisecond {
+		return fmt.Errorf("PollInterval must be at least 100ms to avoid excessive CPU usage, got %v", c.PollInterval)
+	}
+	if c.MinConfidence < 0 || c.MinConfidence > 1 {
+		return fmt.Errorf("MinConfidence must be between 0 and 1, got %v", c.MinConfidence)
+	}
+	if c.DBPath == "" {
+		return fmt.Errorf("DBPath cannot be empty")
+	}
+	if c.ConfigDir == "" {
+		return fmt.Errorf("ConfigDir cannot be empty")
+	}
+	if c.EventRetentionPeriod <= 0 {
+		return fmt.Errorf("EventRetentionPeriod must be positive, got %v", c.EventRetentionPeriod)
+	}
+	if c.EventPruningInterval <= 0 {
+		return fmt.Errorf("EventPruningInterval must be positive, got %v", c.EventPruningInterval)
+	}
+	if c.CacheTTL <= 0 {
+		return fmt.Errorf("CacheTTL must be positive, got %v", c.CacheTTL)
+	}
+	if c.CacheTTL > 1*time.Hour {
+		return fmt.Errorf("CacheTTL must be at most 1 hour to avoid stale data, got %v", c.CacheTTL)
+	}
+	if c.RegistryPruneThreshold <= 0 {
+		return fmt.Errorf("RegistryPruneThreshold must be positive, got %v", c.RegistryPruneThreshold)
+	}
+	if c.RegistryPruneThreshold < 1*time.Hour {
+		return fmt.Errorf("RegistryPruneThreshold must be at least 1 hour to avoid premature pruning, got %v", c.RegistryPruneThreshold)
+	}
+	return nil
 }
 
 // NewWarren creates a new Warren orchestrator
@@ -77,16 +129,29 @@ func NewWarren(config *Config) (*Warren, error) {
 		config = DefaultConfig()
 	}
 
+	// Validate configuration
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
 	// Set default ConfigDir if not provided
 	if config.ConfigDir == "" {
 		config.ConfigDir = ".warren"
 	}
 
-	// Initialize event store
-	eventStore, err := events.NewStore(config.DBPath)
+	// Initialize event store with retention configuration
+	storeConfig := &events.StoreConfig{
+		DBPath:          config.DBPath,
+		RetentionPeriod: config.EventRetentionPeriod,
+		PruningInterval: config.EventPruningInterval,
+	}
+	eventStore, err := events.NewStoreWithConfig(storeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create event store: %w", err)
 	}
+
+	// Start background pruning job
+	eventStore.StartPruningJob()
 
 	// Initialize components
 	tmuxClient := tmux.NewClient(tmux.NewLocalExecutor())
@@ -108,7 +173,7 @@ func NewWarren(config *Config) (*Warren, error) {
 	}
 
 	// Prune stale sessions
-	pruned := sessionRegistry.Prune()
+	pruned := sessionRegistry.PruneWithThreshold(config.RegistryPruneThreshold)
 	if pruned > 0 {
 		fmt.Printf("Pruned %d stale sessions from registry\n", pruned)
 	}
@@ -119,20 +184,22 @@ func NewWarren(config *Config) (*Warren, error) {
 	}
 
 	return &Warren{
-		tmuxClient:      tmuxClient,
-		parser:          parser,
-		stateDetector:   stateDetector,
-		eventStore:      eventStore,
-		notifEngine:     notifEngine,
-		artifactManager: artifactManager,
-		pollInterval:    config.PollInterval,
-		minConfidence:   config.MinConfidence,
-		registryPath:    registryPath,
-		sessions:        make(map[string]*MonitoredSession),
-		sessionRegistry: sessionRegistry,
-		serverRegistry:  serverRegistry,
-		ctx:             ctx,
-		cancel:          cancel,
+		tmuxClient:             tmuxClient,
+		parser:                 parser,
+		stateDetector:          stateDetector,
+		eventStore:             eventStore,
+		notifEngine:            notifEngine,
+		artifactManager:        artifactManager,
+		pollInterval:           config.PollInterval,
+		minConfidence:          config.MinConfidence,
+		registryPath:           registryPath,
+		cacheTTL:               config.CacheTTL,
+		registryPruneThreshold: config.RegistryPruneThreshold,
+		sessions:               make(map[string]*MonitoredSession),
+		sessionRegistry:        sessionRegistry,
+		serverRegistry:         serverRegistry,
+		ctx:                    ctx,
+		cancel:                 cancel,
 	}, nil
 }
 
@@ -227,7 +294,11 @@ func (w *Warren) pollSession(agentID string) error {
 	}
 
 	// Step 1: Capture pane content
-	captureResult, err := w.tmuxClient.GetRecentContent(session.PaneID, 500)
+	client := session.TmuxClient
+	if client == nil {
+		client = w.tmuxClient
+	}
+	captureResult, err := client.GetRecentContent(session.PaneID, 500)
 	if err != nil {
 		return fmt.Errorf("failed to capture pane: %w", err)
 	}
@@ -256,16 +327,38 @@ func (w *Warren) pollSession(agentID string) error {
 		}
 	}
 
-	// Step 4: Detect state from activities
-	recentActivities, err := w.eventStore.GetRecentActivities(agentID, 20)
-	if err != nil {
-		return fmt.Errorf("failed to get recent activities: %w", err)
+	// Step 4: Detect state from content (primary) and activities (secondary)
+	// Content-based detection is more accurate for Claude Code UI patterns
+	contentResult := w.stateDetector.DetectFromContent(captureResult.Content)
+
+	// Fall back to activity-based detection if content detection is low confidence
+	detectionResult := contentResult
+	if contentResult.Confidence < 0.6 {
+		recentActivities, err := w.eventStore.GetRecentActivities(agentID, 20)
+		if err == nil && len(recentActivities) > 0 {
+			activityResult := w.stateDetector.DetectFromActivities(recentActivities)
+			if activityResult.Confidence > contentResult.Confidence {
+				detectionResult = activityResult
+			}
+		}
 	}
 
-	detectionResult := w.stateDetector.DetectFromActivities(recentActivities)
+	// Step 5: Check for state transition with debounce.
+	// Don't transition from an active state (executing, thinking) to idle
+	// within 10 seconds — prevents flickering when polls capture brief
+	// moments between tool calls in an active session.
+	shouldTransition := detectionResult.State != session.CurrentState && detectionResult.Confidence >= w.minConfidence
+	if shouldTransition && detectionResult.State == StateIdle {
+		activeStates := map[AgentState]bool{
+			StateExecuting: true,
+			StateThinking:  true,
+		}
+		if activeStates[session.CurrentState] && time.Since(session.LastStateChange) < 10*time.Second {
+			shouldTransition = false
+		}
+	}
 
-	// Step 5: Check for state transition
-	if w.stateDetector.ShouldTransition(session.CurrentState, detectionResult, w.minConfidence) {
+	if shouldTransition {
 		oldState := session.CurrentState
 		newState := detectionResult.State
 
@@ -274,6 +367,7 @@ func (w *Warren) pollSession(agentID string) error {
 		session.CurrentState = newState
 		session.LastContent = captureResult.Content
 		session.LastPollTime = time.Now()
+		session.LastStateChange = time.Now()
 		session.ConsecutiveErrors = 0
 		w.mu.Unlock()
 
@@ -371,5 +465,44 @@ func (w *Warren) GetNotificationEngine() *notifications.Engine {
 // GetTmuxClient returns the tmux client
 func (w *Warren) GetTmuxClient() *tmux.Client {
 	return w.tmuxClient
+}
+
+// GetServerRegistry returns the server registry
+func (w *Warren) GetServerRegistry() *ServerRegistry {
+	return w.serverRegistry
+}
+
+// AddSessionWithClient registers an agent session with a specific tmux client
+func (w *Warren) AddSessionWithClient(agentID, paneID, serverName, workingDir string, client *tmux.Client) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if _, exists := w.sessions[agentID]; exists {
+		return fmt.Errorf("session %s already registered", agentID)
+	}
+
+	w.sessions[agentID] = &MonitoredSession{
+		AgentID:      agentID,
+		PaneID:       paneID,
+		CurrentState: StateUnknown,
+		LastPollTime: time.Now(),
+		ServerName:   serverName,
+		WorkingDir:   workingDir,
+		TmuxClient:   client,
+	}
+
+	return nil
+}
+
+// TmuxClientForServer creates a tmux client for the given server
+func TmuxClientForServer(server *Server) *tmux.Client {
+	if server.IsLocal() {
+		return tmux.NewClient(tmux.NewLocalExecutor())
+	}
+	port := server.Port
+	if port == 0 {
+		port = 22
+	}
+	return tmux.NewClient(tmux.NewRemoteExecutor(server.User, server.Host, port))
 }
 

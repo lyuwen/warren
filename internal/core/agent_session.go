@@ -370,8 +370,15 @@ func (r *AgentSessionRegistry) Merge(discovered []*AgentSession) {
 // A session is stale if LastSeenAt is more than 24 hours ago
 // Returns the number of sessions pruned
 func (r *AgentSessionRegistry) Prune() int {
+	return r.PruneWithThreshold(24 * time.Hour)
+}
+
+// PruneWithThreshold removes stale sessions from the registry
+// A session is stale if LastSeenAt is older than the threshold
+// Returns the number of sessions pruned
+func (r *AgentSessionRegistry) PruneWithThreshold(threshold time.Duration) int {
 	pruned := 0
-	staleThreshold := time.Now().Add(-24 * time.Hour)
+	staleThreshold := time.Now().Add(-threshold)
 
 	for id, session := range r.sessions {
 		// Check if session is stale

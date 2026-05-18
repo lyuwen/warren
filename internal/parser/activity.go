@@ -23,12 +23,23 @@ type ActivityParser struct {
 func NewActivityParser() *ActivityParser {
 	return &ActivityParser{
 		chatPatterns: []*regexp.Regexp{
+			// Real Claude Code UI: ❯ text for user input
+			regexp.MustCompile(`^\s*❯\s+.+`),
+			// Real Claude Code UI: ● text for assistant output
+			regexp.MustCompile(`^\s*●\s+[^(].+`),
+			// Legacy patterns for backward compatibility
 			regexp.MustCompile(`(?i)^user:`),
 			regexp.MustCompile(`(?i)^assistant:`),
 			regexp.MustCompile(`(?i)^claude:`),
-			regexp.MustCompile(`(?i)>\s+.+`), // Prompt-style input
 		},
 		filePatterns: []*regexp.Regexp{
+			// Real Claude Code UI: ● Read file_path or Read N files
+			regexp.MustCompile(`●\s+Read\s+(.+)`),
+			// Real Claude Code UI: ● Edit(file_path)
+			regexp.MustCompile(`●\s+Edit\((.+?)\)`),
+			// Real Claude Code UI: ● Write(file_path)
+			regexp.MustCompile(`●\s+Write\((.+?)\)`),
+			// Legacy patterns
 			regexp.MustCompile(`(?i)Read\s+tool.*?file_path`),
 			regexp.MustCompile(`(?i)Edit\s+tool.*?file_path`),
 			regexp.MustCompile(`(?i)Write\s+tool.*?file_path`),
@@ -37,6 +48,23 @@ func NewActivityParser() *ActivityParser {
 			regexp.MustCompile(`(?i)writing\s+file:\s+(.+)`),
 		},
 		toolPatterns: []*regexp.Regexp{
+			// Real Claude Code UI: ● Bash(command)
+			regexp.MustCompile(`●\s+Bash\(`),
+			// Real Claude Code UI: ● Agent(name)
+			regexp.MustCompile(`●\s+Agent\(`),
+			// Real Claude Code UI: ● Skill(name)
+			regexp.MustCompile(`●\s+Skill\(`),
+			// Real Claude Code UI: ● LSP(operation)
+			regexp.MustCompile(`●\s+LSP\(`),
+			// Real Claude Code UI: ● WebSearch(query)
+			regexp.MustCompile(`●\s+WebSearch\(`),
+			// Real Claude Code UI: ● WebFetch(url)
+			regexp.MustCompile(`●\s+WebFetch\(`),
+			// Real Claude Code UI: ● Grep(pattern)
+			regexp.MustCompile(`●\s+Grep\(`),
+			// Real Claude Code UI: ● Glob(pattern)
+			regexp.MustCompile(`●\s+Glob\(`),
+			// Legacy patterns
 			regexp.MustCompile(`(?i)Bash\s+tool`),
 			regexp.MustCompile(`(?i)LSP\s+tool`),
 			regexp.MustCompile(`(?i)WebSearch\s+tool`),
@@ -44,6 +72,13 @@ func NewActivityParser() *ActivityParser {
 			regexp.MustCompile(`(?i)running\s+tests`),
 		},
 		permissionPatterns: []*regexp.Regexp{
+			// Real Claude Code UI: "Esc to cancel · Tab to amend" footer
+			regexp.MustCompile(`Esc to cancel\s*·?\s*Tab to amend`),
+			// Real Claude Code UI: choice selector ❯ N. Option
+			regexp.MustCompile(`❯\s+\d+\.\s+`),
+			// Real Claude Code UI: "Allowed by auto mode" (permission auto-approved)
+			regexp.MustCompile(`(?i)Allowed by auto mode`),
+			// Legacy patterns
 			regexp.MustCompile(`(?i)permission\s+required`),
 			regexp.MustCompile(`(?i)approve\s+or\s+deny`),
 			regexp.MustCompile(`(?i)waiting\s+for\s+approval`),
@@ -51,10 +86,11 @@ func NewActivityParser() *ActivityParser {
 			regexp.MustCompile(`(?i)allow\s+this\s+action`),
 		},
 		questionPatterns: []*regexp.Regexp{
-			// Look for Claude Code's AskUserQuestion tool usage
+			// Real Claude Code UI: ● question text?
+			regexp.MustCompile(`●\s+.+\?$`),
+			// Legacy: AskUserQuestion tool usage
 			regexp.MustCompile(`(?i)AskUserQuestion`),
-			// Look for actual questions at end of output (standalone lines)
-			// These patterns are much more specific to avoid false positives
+			// Legacy question patterns
 			regexp.MustCompile(`(?m)^What would you like .*\?$`),
 			regexp.MustCompile(`(?m)^Should I .*\?$`),
 			regexp.MustCompile(`(?m)^Would you like .*\?$`),
@@ -62,7 +98,7 @@ func NewActivityParser() *ActivityParser {
 			regexp.MustCompile(`(?m)^How should I .*\?$`),
 			regexp.MustCompile(`(?m)^Which .*would you prefer\?$`),
 			// Multiple choice patterns (numbered options)
-			regexp.MustCompile(`(?m)^\d+\.\s+.+$`), // "1. Option A"
+			regexp.MustCompile(`(?m)^\d+\.\s+.+$`),
 		},
 	}
 }
@@ -140,6 +176,10 @@ func (p *ActivityParser) parseChat(agentID string, lines []string, timestamp tim
 					role = "user"
 				} else if strings.HasPrefix(strings.ToLower(line), "assistant:") || strings.HasPrefix(strings.ToLower(line), "claude:") {
 					role = "assistant"
+				} else if strings.HasPrefix(strings.TrimSpace(line), "❯") {
+					role = "user"
+				} else if strings.HasPrefix(strings.TrimSpace(line), "●") {
+					role = "assistant"
 				}
 
 				activity := &events.AgentActivityEvent{
@@ -207,12 +247,24 @@ func (p *ActivityParser) parseToolUsage(agentID string, content string, timestam
 		matches := pattern.FindAllString(content, -1)
 		for _, match := range matches {
 			toolName := "unknown"
-			if strings.Contains(strings.ToLower(match), "bash") {
+			matchLower := strings.ToLower(match)
+			switch {
+			case strings.Contains(match, "Bash"):
 				toolName = "bash"
-			} else if strings.Contains(strings.ToLower(match), "lsp") {
+			case strings.Contains(match, "Agent"):
+				toolName = "agent"
+			case strings.Contains(match, "Skill"):
+				toolName = "skill"
+			case strings.Contains(matchLower, "lsp"):
 				toolName = "lsp"
-			} else if strings.Contains(strings.ToLower(match), "websearch") {
+			case strings.Contains(matchLower, "websearch"):
 				toolName = "websearch"
+			case strings.Contains(matchLower, "webfetch"):
+				toolName = "webfetch"
+			case strings.Contains(match, "Grep"):
+				toolName = "grep"
+			case strings.Contains(match, "Glob"):
+				toolName = "glob"
 			}
 
 			activity := &events.AgentActivityEvent{

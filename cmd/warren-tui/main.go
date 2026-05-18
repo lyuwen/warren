@@ -14,6 +14,7 @@ func main() {
 	// Create Warren instance with default config
 	config := core.DefaultConfig()
 	config.DBPath = os.ExpandEnv("$HOME/.warren/warren.db")
+	config.ConfigDir = os.ExpandEnv("$HOME/.warren")
 
 	// Ensure .warren directory exists
 	warrenDir := os.ExpandEnv("$HOME/.warren")
@@ -53,47 +54,50 @@ func main() {
 	}
 }
 
-// discoverAndRegisterSessions discovers tmux sessions and registers them with Warren
+// discoverAndRegisterSessions discovers tmux sessions on all servers and registers them with Warren
 func discoverAndRegisterSessions(warren *core.Warren) error {
-	// Create tmux client for discovery
-	tmuxClient := warren.GetTmuxClient()
-
-	// Use the discovery service to find agent sessions
-	discoveryService := core.NewAgentDiscovery(tmuxClient)
-
-	// Get topology (use "localhost" as server name)
-	topology, err := tmuxClient.DiscoverTopology("localhost")
-	if err != nil {
-		return fmt.Errorf("failed to discover topology: %w", err)
+	registry := warren.GetServerRegistry()
+	if registry == nil {
+		return fmt.Errorf("no server registry available")
 	}
 
-	// Discover all agent sessions
-	results, err := discoveryService.DiscoverAll(topology, 0.7)
-	if err != nil {
-		return fmt.Errorf("failed to discover sessions: %w", err)
-	}
+	totalRegistered := 0
+	for _, server := range registry.List() {
+		client := core.TmuxClientForServer(server)
+		discoveryService := core.NewAgentDiscovery(client)
 
-	if len(results) == 0 {
-		log.Println("No agent sessions discovered")
-		return nil
-	}
-
-	// Register each discovered session
-	for _, result := range results {
-		session := result.ToAgentSession()
-
-		// Register in both the old sessions map and new registry
-		if err := warren.AddSession(session.ID, session.TmuxPaneID); err != nil {
-			log.Printf("Warning: Failed to register session %s: %v", session.ID, err)
+		topology, err := client.DiscoverTopology(server.Name)
+		if err != nil {
+			log.Printf("Warning: Failed to discover topology on %s: %v", server.Name, err)
 			continue
 		}
 
-		// Also register in the session registry for topology integration
-		if err := warren.RegisterAgentSession(session); err != nil {
-			log.Printf("Warning: Failed to register session in registry %s: %v", session.ID, err)
+		results, err := discoveryService.DiscoverAll(topology, 0.7)
+		if err != nil {
+			log.Printf("Warning: Failed to discover sessions on %s: %v", server.Name, err)
+			continue
 		}
 
-		log.Printf("Registered agent session: %s (pane: %s, type: %s)", session.ID, session.TmuxPaneID, session.AgentType)
+		for _, result := range results {
+			session := result.ToAgentSession()
+			session.ServerName = server.Name
+
+			if err := warren.AddSessionWithClient(session.ID, session.TmuxPaneID, server.Name, session.Metadata["working_dir"], client); err != nil {
+				log.Printf("Warning: Failed to register session %s: %v", session.ID, err)
+				continue
+			}
+
+			if err := warren.RegisterAgentSession(session); err != nil {
+				log.Printf("Warning: Failed to register session in registry %s: %v", session.ID, err)
+			}
+
+			log.Printf("Registered agent session: %s (pane: %s, type: %s, server: %s)", session.ID, session.TmuxPaneID, session.AgentType, server.Name)
+			totalRegistered++
+		}
+	}
+
+	if totalRegistered == 0 {
+		log.Println("No agent sessions discovered on any server")
 	}
 
 	return nil
