@@ -62,7 +62,7 @@ func (e *RemoteExecutor) Execute(command string, args ...string) (string, error)
 	sshArgs := []string{
 		"-o", "ControlMaster=auto",
 		"-o", fmt.Sprintf("ControlPath=%s", controlPath),
-		"-o", "ControlPersist=30",
+		"-o", "ControlPersist=600",
 		"-o", "ConnectTimeout=10",
 		"-p", fmt.Sprintf("%d", e.port),
 		fmt.Sprintf("%s@%s", e.user, e.host),

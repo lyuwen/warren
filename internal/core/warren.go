@@ -387,7 +387,7 @@ func (w *Warren) pollSession(agentID string) error {
 	return nil
 }
 
-// handlePollError handles errors during polling
+	// handlePollError handles errors during polling
 func (w *Warren) handlePollError(agentID string, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -400,12 +400,11 @@ func (w *Warren) handlePollError(agentID string, err error) {
 	session.ErrorCount++
 	session.ConsecutiveErrors++
 
-	// If too many consecutive errors, mark session as error state
-	if session.ConsecutiveErrors >= 5 {
+	// After many consecutive errors, mark session as error state.
+	// This is recoverable — a successful poll will clear it.
+	if session.ConsecutiveErrors >= 10 {
 		oldState := session.CurrentState
 		session.CurrentState = StateError
-
-		// Emit error notification (convert to string)
 		w.notifEngine.ProcessStateChange(agentID, string(oldState), string(StateError))
 	}
 }

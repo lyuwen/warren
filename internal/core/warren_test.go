@@ -327,8 +327,8 @@ func TestWarrenErrorHandling(t *testing.T) {
 		t.Errorf("Expected error count 1, got %d", session.ErrorCount)
 	}
 
-	// Simulate multiple consecutive errors
-	for i := 0; i < 5; i++ {
+	// Simulate multiple consecutive errors (threshold is 10)
+	for i := 0; i < 10; i++ {
 		warren.handlePollError("error-agent", fmt.Errorf("test error %d", i))
 	}
 
