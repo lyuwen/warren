@@ -1,0 +1,35 @@
+  27
+  28 ### `lua/config/`
+  29 - `options.lua` — vim.opt settings (2-space indent, solarized dark, splits below/right)
+  30 - `keymaps.lua` — all keybindings; leader is `\` (backslash)
+  31 - `autocmds.lua` — relative number toggle, NvimTree auto-open for dirs, jump-to-last-position, git commit cursor reset, Python template loading
+  32 - `functions.lua` — global Lua functions (`SaveExit`, `RunFile`, `CloseNonFileBuf`, `JoinList`, `CloseQuit`) exposed via `_G`
+  33
+  34 ### `lua/plugins/`
+  35 Each file returns a lazy.nvim spec table. `init.lua` imports all submodules.
+  36
+  37 - `ui.lua` — solarized.nvim, lualine, devicons, which-key
+  38 - `editor.lua` — nvim-tree, tagbar, Comment.nvim, nvim-surround, vim-visual-multi, LuaSnip, vimtex, toggleterm, markdown-preview, treesitter-context
+  39 - `lsp.lua` — nvim-lspconfig + mason (pyright, lua_ls, fortls); uses `vim.lsp.config` on nvim 0.11+ with fallback to old `lspconfig[server].setup()`
+  40 - `completion.lua` — nvim-cmp with LSP/buffer/path/snippet sources; jedi-vim loaded for Python but completions disabled (LSP handles it)
+  41 - `git.lua` — fugitive, gv.vim, gitsigns
+  42 - `ai.lua` — claudecode.nvim with snacks.nvim dependency; keybindings under `<leader>a`
+  43
+  44 ### `after/ftplugin/`
+  45 Filetype overrides for Python (2-space tabs, autopep8), Fortran (free-source), LaTeX (pdf compilation, no folding).
+  46
+  47 ## Key Conventions
+  48
+  49 - All custom functions are global (`_G`) — called directly from keymaps (e.g., `RunFile()`, `SaveExit()`)
+  50 - `F9` dispatches based on context: SConstruct → scons, Makefile → make, .py → python, .tex → vimtex
+  51 - LSP `on_attach` is defined inline in `lsp.lua` and shared across all servers
+  52 - Plugin-specific keymaps live in the plugin spec's `keys` field (lazy-loaded), while general keymaps live in `config/keymaps.lua`
+  53 - The config has nvim 0.11+ compatibility paths (e.g., `vim.lsp.config` vs `lspconfig` fallback)
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to create CLAUDE.md?
+ ❯ 1. Yes
+   2. Yes, allow all edits during this session (shift+tab)
+   3. No
+
+ Esc to cancel · Tab to amend
+

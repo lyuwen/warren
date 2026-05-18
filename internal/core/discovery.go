@@ -30,6 +30,7 @@ type DiscoveryResult struct {
 	AgentType       string
 	Confidence      float64 // 0.0 to 1.0
 	Evidence        []string
+	WorkingDir      string  // Current working directory of the pane
 }
 
 // ClaudeCodeDetector detects Claude Code sessions
@@ -51,7 +52,7 @@ var copilotPatterns = []*regexp.Regexp{
 }
 
 // DiscoverInPane analyzes a pane to detect if it contains an agent session
-func (d *AgentDiscovery) DiscoverInPane(serverName string, sessionName string, windowIndex int, paneID string, currentCommand string) (*DiscoveryResult, error) {
+func (d *AgentDiscovery) DiscoverInPane(serverName string, sessionName string, windowIndex int, paneID string, currentCommand string, currentPath string) (*DiscoveryResult, error) {
 	// CRITICAL: Check current command FIRST to avoid false positives
 	// If the command is a known agent, trust it and return immediately
 	if isAgentCommand(currentCommand) {
@@ -81,6 +82,7 @@ func (d *AgentDiscovery) DiscoverInPane(serverName string, sessionName string, w
 			AgentType:       agentType,
 			Confidence:      confidence,
 			Evidence:        []string{fmt.Sprintf("process: %s", currentCommand)},
+			WorkingDir:      currentPath,
 		}, nil
 	}
 
@@ -185,7 +187,8 @@ func (d *AgentDiscovery) DiscoverAll(topology *tmux.Topology, minConfidence floa
 					session.Name,
 					window.Index,
 					pane.ID,
-					pane.CurrentCommand, // Pass current command for filtering
+					pane.CurrentCommand,
+					pane.CurrentPath,
 				)
 
 				if err != nil {
@@ -235,6 +238,7 @@ func (r *DiscoveryResult) ToAgentSession() *AgentSession {
 		Metadata: map[string]string{
 			"discovery_confidence": fmt.Sprintf("%.2f", r.Confidence),
 			"discovery_evidence":   strings.Join(r.Evidence, "; "),
+			"working_dir":          r.WorkingDir,
 		},
 	}
 }

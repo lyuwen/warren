@@ -71,7 +71,7 @@ func TestAgentDiscovery_DetectClaudeCode(t *testing.T) {
 			client := tmux.NewClient(executor)
 			discovery := NewAgentDiscovery(client)
 
-			result, err := discovery.DiscoverInPane("test-server", "test-session", 0, "%1", tt.command)
+			result, err := discovery.DiscoverInPane("test-server", "test-session", 0, "%1", tt.command, "/tmp")
 			if err != nil {
 				t.Fatalf("Discovery failed: %v", err)
 			}
@@ -129,7 +129,7 @@ func TestAgentDiscovery_DetectCopilot(t *testing.T) {
 			client := tmux.NewClient(executor)
 			discovery := NewAgentDiscovery(client)
 
-			result, err := discovery.DiscoverInPane("test-server", "test-session", 0, "%1", tt.command)
+			result, err := discovery.DiscoverInPane("test-server", "test-session", 0, "%1", tt.command, "/tmp")
 			if err != nil {
 				t.Fatalf("Discovery failed: %v", err)
 			}

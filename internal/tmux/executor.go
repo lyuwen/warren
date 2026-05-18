@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 // LocalExecutor executes commands on the local machine
@@ -47,19 +48,22 @@ func NewRemoteExecutor(user, host string, port int) *RemoteExecutor {
 
 // Execute runs a command remotely via SSH and returns its output
 func (e *RemoteExecutor) Execute(command string, args ...string) (string, error) {
-	// Build the full command string
-	fullCmd := command
+	// Build the full command string with proper shell quoting.
+	// Every argument is single-quoted to prevent remote shell interpretation
+	// of special characters like #{}, $, etc.
+	fullCmd := shellescape(command)
 	for _, arg := range args {
-		// Simple quoting - may need to be more sophisticated
-		if containsSpace(arg) {
-			fullCmd += fmt.Sprintf(" '%s'", arg)
-		} else {
-			fullCmd += " " + arg
-		}
+		fullCmd += " " + shellescape(arg)
 	}
 
-	// Execute via SSH
+	// Execute via SSH with connection multiplexing to avoid
+	// overwhelming the remote SSH daemon with rapid connections.
+	controlPath := fmt.Sprintf("/tmp/warren-ssh-%s@%s:%d", e.user, e.host, e.port)
 	sshArgs := []string{
+		"-o", "ControlMaster=auto",
+		"-o", fmt.Sprintf("ControlPath=%s", controlPath),
+		"-o", "ControlPersist=30",
+		"-o", "ConnectTimeout=10",
 		"-p", fmt.Sprintf("%d", e.port),
 		fmt.Sprintf("%s@%s", e.user, e.host),
 		fullCmd,
@@ -78,11 +82,23 @@ func (e *RemoteExecutor) Execute(command string, args ...string) (string, error)
 	return stdout.String(), nil
 }
 
-func containsSpace(s string) bool {
+// shellescape wraps a string in single quotes for safe shell transport.
+// Single quotes inside the string are handled by ending the quote, adding
+// an escaped single quote, and reopening the quote.
+func shellescape(s string) string {
+	if s == "" {
+		return "''"
+	}
+	// If the string is simple (no special chars), pass it through unquoted
+	safe := true
 	for _, c := range s {
-		if c == ' ' || c == '\t' || c == '\n' {
-			return true
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '/' || c == ':' || c == ',' || c == '+' || c == '=') {
+			safe = false
+			break
 		}
 	}
-	return false
+	if safe {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }

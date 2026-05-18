@@ -37,6 +37,7 @@ type Pane struct {
 	WindowID       string
 	PID            int    // Process ID running in the pane
 	CurrentCommand string // Current command running in the pane
+	CurrentPath    string // Current working directory of the pane
 }
 
 // Topology represents the complete tmux topology for a server
@@ -148,8 +149,8 @@ func (c *Client) ListWindows(sessionName string) ([]*Window, error) {
 // ListPanes returns all panes for a given window
 func (c *Client) ListPanes(sessionName string, windowIndex int) ([]*Pane, error) {
 	target := fmt.Sprintf("%s:%d", sessionName, windowIndex)
-	// Format: pane_id:pane_index:pane_title:pane_width:pane_height:pane_active:pane_pid:pane_current_command
-	format := "#{pane_id}:#{pane_index}:#{pane_title}:#{pane_width}:#{pane_height}:#{pane_active}:#{pane_pid}:#{pane_current_command}"
+	// Format: pane_id:pane_index:pane_title:pane_width:pane_height:pane_active:pane_pid:pane_current_command:pane_current_path
+	format := "#{pane_id}:#{pane_index}:#{pane_title}:#{pane_width}:#{pane_height}:#{pane_active}:#{pane_pid}:#{pane_current_command}:#{pane_current_path}"
 	output, err := c.executor.Execute("tmux", "list-panes", "-t", target, "-F", format)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list panes for %s: %w", target, err)
@@ -163,7 +164,8 @@ func (c *Client) ListPanes(sessionName string, windowIndex int) ([]*Pane, error)
 			continue
 		}
 
-		parts := strings.Split(line, ":")
+		// Split into at most 9 parts (last part is path which may contain colons on some systems)
+		parts := strings.SplitN(line, ":", 9)
 		if len(parts) < 8 {
 			continue
 		}
@@ -172,6 +174,11 @@ func (c *Client) ListPanes(sessionName string, windowIndex int) ([]*Pane, error)
 		width, _ := strconv.Atoi(parts[3])
 		height, _ := strconv.Atoi(parts[4])
 		pid, _ := strconv.Atoi(parts[6])
+
+		currentPath := ""
+		if len(parts) >= 9 {
+			currentPath = parts[8]
+		}
 
 		pane := &Pane{
 			ID:             parts[0],
@@ -182,6 +189,7 @@ func (c *Client) ListPanes(sessionName string, windowIndex int) ([]*Pane, error)
 			Active:         parts[5] == "1",
 			PID:            pid,
 			CurrentCommand: parts[7],
+			CurrentPath:    currentPath,
 		}
 
 		panes = append(panes, pane)

@@ -46,13 +46,17 @@ type Warren struct {
 
 // MonitoredSession represents an agent session being monitored
 type MonitoredSession struct {
-	AgentID       string
-	PaneID        string
-	CurrentState  AgentState
-	LastPollTime  time.Time
-	LastContent   string
-	ErrorCount    int
+	AgentID           string
+	PaneID            string
+	CurrentState      AgentState
+	LastPollTime      time.Time
+	LastContent       string
+	ErrorCount        int
 	ConsecutiveErrors int
+	ServerName        string
+	WorkingDir        string
+	LastStateChange   time.Time
+	TmuxClient        *tmux.Client // Per-session tmux client (local or remote)
 }
 
 // Config configures Warren behavior
@@ -290,7 +294,11 @@ func (w *Warren) pollSession(agentID string) error {
 	}
 
 	// Step 1: Capture pane content
-	captureResult, err := w.tmuxClient.GetRecentContent(session.PaneID, 500)
+	client := session.TmuxClient
+	if client == nil {
+		client = w.tmuxClient
+	}
+	captureResult, err := client.GetRecentContent(session.PaneID, 500)
 	if err != nil {
 		return fmt.Errorf("failed to capture pane: %w", err)
 	}
@@ -319,16 +327,38 @@ func (w *Warren) pollSession(agentID string) error {
 		}
 	}
 
-	// Step 4: Detect state from activities
-	recentActivities, err := w.eventStore.GetRecentActivities(agentID, 20)
-	if err != nil {
-		return fmt.Errorf("failed to get recent activities: %w", err)
+	// Step 4: Detect state from content (primary) and activities (secondary)
+	// Content-based detection is more accurate for Claude Code UI patterns
+	contentResult := w.stateDetector.DetectFromContent(captureResult.Content)
+
+	// Fall back to activity-based detection if content detection is low confidence
+	detectionResult := contentResult
+	if contentResult.Confidence < 0.6 {
+		recentActivities, err := w.eventStore.GetRecentActivities(agentID, 20)
+		if err == nil && len(recentActivities) > 0 {
+			activityResult := w.stateDetector.DetectFromActivities(recentActivities)
+			if activityResult.Confidence > contentResult.Confidence {
+				detectionResult = activityResult
+			}
+		}
 	}
 
-	detectionResult := w.stateDetector.DetectFromActivities(recentActivities)
+	// Step 5: Check for state transition with debounce.
+	// Don't transition from an active state (executing, thinking) to idle
+	// within 10 seconds — prevents flickering when polls capture brief
+	// moments between tool calls in an active session.
+	shouldTransition := detectionResult.State != session.CurrentState && detectionResult.Confidence >= w.minConfidence
+	if shouldTransition && detectionResult.State == StateIdle {
+		activeStates := map[AgentState]bool{
+			StateExecuting: true,
+			StateThinking:  true,
+		}
+		if activeStates[session.CurrentState] && time.Since(session.LastStateChange) < 10*time.Second {
+			shouldTransition = false
+		}
+	}
 
-	// Step 5: Check for state transition
-	if w.stateDetector.ShouldTransition(session.CurrentState, detectionResult, w.minConfidence) {
+	if shouldTransition {
 		oldState := session.CurrentState
 		newState := detectionResult.State
 
@@ -337,6 +367,7 @@ func (w *Warren) pollSession(agentID string) error {
 		session.CurrentState = newState
 		session.LastContent = captureResult.Content
 		session.LastPollTime = time.Now()
+		session.LastStateChange = time.Now()
 		session.ConsecutiveErrors = 0
 		w.mu.Unlock()
 
@@ -434,5 +465,44 @@ func (w *Warren) GetNotificationEngine() *notifications.Engine {
 // GetTmuxClient returns the tmux client
 func (w *Warren) GetTmuxClient() *tmux.Client {
 	return w.tmuxClient
+}
+
+// GetServerRegistry returns the server registry
+func (w *Warren) GetServerRegistry() *ServerRegistry {
+	return w.serverRegistry
+}
+
+// AddSessionWithClient registers an agent session with a specific tmux client
+func (w *Warren) AddSessionWithClient(agentID, paneID, serverName, workingDir string, client *tmux.Client) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if _, exists := w.sessions[agentID]; exists {
+		return fmt.Errorf("session %s already registered", agentID)
+	}
+
+	w.sessions[agentID] = &MonitoredSession{
+		AgentID:      agentID,
+		PaneID:       paneID,
+		CurrentState: StateUnknown,
+		LastPollTime: time.Now(),
+		ServerName:   serverName,
+		WorkingDir:   workingDir,
+		TmuxClient:   client,
+	}
+
+	return nil
+}
+
+// TmuxClientForServer creates a tmux client for the given server
+func TmuxClientForServer(server *Server) *tmux.Client {
+	if server.IsLocal() {
+		return tmux.NewClient(tmux.NewLocalExecutor())
+	}
+	port := server.Port
+	if port == 0 {
+		port = 22
+	}
+	return tmux.NewClient(tmux.NewRemoteExecutor(server.User, server.Host, port))
 }
 

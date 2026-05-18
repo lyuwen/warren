@@ -18,15 +18,25 @@ func (s *Server) handleGetServers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For now, return localhost as the only server
-	// In the future, this will query the server registry
-	servers := []map[string]interface{}{
-		{
-			"name":        "localhost",
-			"host":        "localhost",
-			"agent_count": len(s.warren.GetAllSessions()),
-			"status":      "online",
-		},
+	// Query all servers from the registry
+	allSessions := s.warren.GetAllSessions()
+	serverAgentCounts := make(map[string]int)
+	for _, sess := range allSessions {
+		serverAgentCounts[sess.ServerName]++
+	}
+
+	registry := s.warren.GetServerRegistry()
+	servers := make([]map[string]interface{}, 0)
+	if registry != nil {
+		for _, srv := range registry.List() {
+			servers = append(servers, map[string]interface{}{
+				"name":        srv.Name,
+				"host":        srv.Host,
+				"kind":        string(srv.Kind),
+				"agent_count": serverAgentCounts[srv.Name],
+				"status":      "online",
+			})
+		}
 	}
 
 	respondJSON(w, http.StatusOK, servers)
@@ -49,6 +59,8 @@ func (s *Server) handleGetAgents(w http.ResponseWriter, r *http.Request) {
 			"state":        string(session.CurrentState),
 			"last_poll":    session.LastPollTime,
 			"error_count":  session.ErrorCount,
+			"server":       session.ServerName,
+			"working_dir":  session.WorkingDir,
 		})
 	}
 

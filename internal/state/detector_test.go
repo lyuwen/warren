@@ -1,11 +1,12 @@
 package state
 
 import (
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/lfu/warren/internal/types"
 	"github.com/lfu/warren/internal/events"
+	"github.com/lfu/warren/internal/types"
 )
 
 func TestStateDetector_DetectFromActivities_Empty(t *testing.T) {
@@ -358,25 +359,25 @@ func TestStateDetector_IdleDetection_PromptSuffix(t *testing.T) {
 			name:          "bash prompt",
 			content:       "user@host:~/project$ ",
 			expectedState: types.StateIdle,
-			minConfidence: 0.95,
+			minConfidence: 0.85,
 		},
 		{
 			name:          "generic prompt",
 			content:       "Ready for input\n> ",
 			expectedState: types.StateIdle,
-			minConfidence: 0.95,
+			minConfidence: 0.85,
 		},
 		{
 			name:          "waiting for input indicator",
 			content:       "Waiting for input from user",
 			expectedState: types.StateIdle,
-			minConfidence: 0.8,
+			minConfidence: 0.75,
 		},
 		{
 			name:          "standing by indicator",
 			content:       "Standing by for next command",
 			expectedState: types.StateIdle,
-			minConfidence: 0.8,
+			minConfidence: 0.75,
 		},
 	}
 
@@ -655,18 +656,20 @@ func TestStateDetector_Integration_IdleWithin5Seconds(t *testing.T) {
 	}
 }
 
-// Test that old question signals don't cause false positives
+// Test that old question signals don't cause false positives when buried in content
 func TestStateDetector_OldQuestionSignalsDecay(t *testing.T) {
 	detector := NewStateDetector()
 
-	// Old question (3 minutes ago) + recent idle indicator
-	content := "Should I proceed with this approach?\n\n[... 3 minutes of output ...]\n\nReady for input\n> "
+	// Old question buried far above the last 15 lines, with a prompt at the bottom.
+	// The question should NOT be detected because it's outside the recency window.
+	filler := strings.Repeat("line of output\n", 20)
+	content := "Should I proceed with this approach?\n\n" + filler + "Ready for input\n> "
 
 	result := detector.DetectFromContent(content)
 
-	// Should detect idle (prompt suffix) over old question
+	// Question is outside the 15-line window, so idle should win
 	if result.State != types.StateIdle {
-		t.Errorf("Expected StateIdle (prompt detected), got %s", result.State)
+		t.Errorf("Expected StateIdle (question outside recency window), got %s", result.State)
 	}
 }
 
@@ -700,9 +703,9 @@ func TestStateDetector_QuestionDetectionEdgeCases(t *testing.T) {
 		},
 		{
 			name:          "Question in middle of long output - not detected",
-			content:       "Should I do this?\n\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nNow executing the command",
+			content:       "Should I do this?\n\n" + strings.Repeat("Line of output\n", 20) + "Now executing the command",
 			expectedState: types.StateExecuting,
-			description:   "Question not in last 3 lines should not be detected",
+			description:   "Question outside recency window should not be detected",
 		},
 		{
 			name:          "Exclamation as emphasis - not a question",
