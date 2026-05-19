@@ -402,10 +402,10 @@ func (w *Warren) handlePollError(agentID string, err error) {
 
 	// After many consecutive errors, mark session as error state.
 	// This is recoverable — a successful poll will clear it.
+	// Don't fire a notification — poll failures are infrastructure
+	// issues (SSH drops), not actionable agent errors.
 	if session.ConsecutiveErrors >= 10 {
-		oldState := session.CurrentState
 		session.CurrentState = StateError
-		w.notifEngine.ProcessStateChange(agentID, string(oldState), string(StateError))
 	}
 }
 
