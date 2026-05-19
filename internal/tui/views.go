@@ -7,7 +7,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// renderSessionList renders the session list view
+// fullScreenBorder returns a border style sized to the terminal window
+func (m Model) fullScreenBorder() lipgloss.Style {
+	return borderStyle.
+		Width(m.width - 4).   // Account for border + padding
+		Height(m.height - 4)
+}
 func (m Model) renderSessionList() string {
 	var b strings.Builder
 
@@ -59,7 +64,7 @@ func (m Model) renderSessionList() string {
 	help := helpStyle.Render("↑/↓: navigate • enter: details • n: notifications • q: quit")
 	b.WriteString(help)
 
-	return borderStyle.Render(b.String())
+	return m.fullScreenBorder().Render(b.String())
 }
 
 // renderAgentDetail renders the agent detail view
@@ -67,7 +72,7 @@ func (m Model) renderAgentDetail() string {
 	var b strings.Builder
 
 	if m.selectedAgentID == "" {
-		return borderStyle.Render("No agent selected")
+		return m.fullScreenBorder().Render("No agent selected")
 	}
 
 	// Title
@@ -144,7 +149,7 @@ func (m Model) renderAgentDetail() string {
 	help := helpStyle.Render("c: conversation • ←/esc: back • q: quit")
 	b.WriteString(help)
 
-	return borderStyle.Render(b.String())
+	return m.fullScreenBorder().Render(b.String())
 }
 
 // renderNotifications renders the notifications view
@@ -186,7 +191,7 @@ func (m Model) renderNotifications() string {
 	help := helpStyle.Render("j/k: navigate • x: clear selected • C: clear all • ←/esc: back • q: quit")
 	b.WriteString(help)
 
-	return borderStyle.Render(b.String())
+	return m.fullScreenBorder().Render(b.String())
 }
 
 // renderConversation renders the conversation history view
@@ -194,7 +199,7 @@ func (m Model) renderConversation() string {
 	var b strings.Builder
 
 	if m.selectedAgentID == "" {
-		return borderStyle.Render("No agent selected")
+		return m.fullScreenBorder().Render("No agent selected")
 	}
 
 	// Title
@@ -210,7 +215,7 @@ func (m Model) renderConversation() string {
 		b.WriteString("\n\n")
 		help := helpStyle.Render("←/esc: back • q: quit")
 		b.WriteString(help)
-		return borderStyle.Render(b.String())
+		return m.fullScreenBorder().Render(b.String())
 	}
 
 	// Display messages
@@ -276,5 +281,5 @@ func (m Model) renderConversation() string {
 	help := helpStyle.Render("↑/↓: scroll • ←/esc: back • q: quit")
 	b.WriteString(help)
 
-	return borderStyle.Render(b.String())
+	return m.fullScreenBorder().Render(b.String())
 }
