@@ -39,8 +39,12 @@ func NewConversationService() *ConversationService {
 	return NewConversationServiceWithTTL(5 * time.Second)
 }
 
-// NewConversationServiceWithTTL creates a new conversation service with custom cache TTL
+// NewConversationServiceWithTTL creates a new conversation service with custom cache TTL.
+// If cacheTTL is zero or negative, a default of 5 seconds is used.
 func NewConversationServiceWithTTL(cacheTTL time.Duration) *ConversationService {
+	if cacheTTL <= 0 {
+		cacheTTL = 5 * time.Second
+	}
 	return &ConversationService{
 		sessionMapper:      claude.NewSessionMapper(),
 		conversationReader: claude.NewConversationReader(),

@@ -43,7 +43,7 @@ type Model struct {
 func NewModel(warren *core.Warren) Model {
 	return Model{
 		warren:              warren,
-		conversationService: core.NewConversationService(),
+		conversationService: core.NewConversationServiceWithTTL(warren.CacheTTL()),
 		currentView:         ViewSessionList,
 		sessionList:         []string{},
 		selectedIndex:       0,

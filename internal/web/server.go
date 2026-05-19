@@ -39,7 +39,7 @@ func NewServer(config *Config) *Server {
 
 	server := &Server{
 		warren:              config.Warren,
-		conversationService: core.NewConversationService(),
+		conversationService: core.NewConversationServiceWithTTL(config.Warren.CacheTTL()),
 		addr:                config.Addr,
 		wsHub:               wsHub,
 	}

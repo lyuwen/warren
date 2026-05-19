@@ -410,6 +410,11 @@ func (w *Warren) handlePollError(agentID string, err error) {
 }
 
 // GetSessionState returns the current state of a session
+// CacheTTL returns the configured cache TTL for conversation history.
+func (w *Warren) CacheTTL() time.Duration {
+	return w.cacheTTL
+}
+
 func (w *Warren) GetSessionState(agentID string) (AgentState, error) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
