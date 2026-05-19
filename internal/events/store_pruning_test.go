@@ -513,11 +513,20 @@ func TestStartPruningJob(t *testing.T) {
 		t.Errorf("Expected 2 events, got %d", count)
 	}
 
+	// Subscribe to pruning completion before starting the job so we don't
+	// miss the initial run.
+	done := make(chan struct{}, 1)
+	store.pruningDone = done
+
 	// Start pruning job
 	store.StartPruningJob()
 
-	// Wait for pruning to run (initial run + one interval)
-	time.Sleep(300 * time.Millisecond)
+	// Wait deterministically for the initial pruning cycle to complete.
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for pruning cycle to complete")
+	}
 
 	// Old event should be pruned
 	count, err = store.Count()

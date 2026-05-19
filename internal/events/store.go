@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -71,6 +72,11 @@ type Store struct {
 	stopPruning     chan struct{}
 	closeOnce       sync.Once
 	pruningOnce     sync.Once
+
+	// pruningDone is signaled (non-blocking send) after each runPruning cycle
+	// completes. Nil by default; tests may set it to synchronize on pruning
+	// completion instead of sleeping.
+	pruningDone chan struct{}
 }
 
 // StoreConfig configures the event store
@@ -422,16 +428,25 @@ func (s *Store) StartPruningJob() {
 func (s *Store) runPruning() {
 	startTime := time.Now()
 
+	defer func() {
+		if s.pruningDone != nil {
+			select {
+			case s.pruningDone <- struct{}{}:
+			default:
+			}
+		}
+	}()
+
 	deleted, err := s.PruneOldEvents(s.retentionPeriod)
 	if err != nil {
-		fmt.Printf("[EventStore] Pruning failed: %v\n", err)
+		log.Printf("[EventStore] Pruning failed: %v", err)
 		return
 	}
 
 	duration := time.Since(startTime)
 
 	if deleted > 0 {
-		fmt.Printf("[EventStore] Pruned %d events older than %v (took %v)\n",
+		log.Printf("[EventStore] Pruned %d events older than %v (took %v)",
 			deleted, s.retentionPeriod, duration)
 	}
 }
