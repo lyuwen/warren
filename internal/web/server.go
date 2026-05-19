@@ -52,6 +52,7 @@ func NewServer(config *Config) *Server {
 	mux.HandleFunc("/api/agents/", server.handleGetAgent)
 	mux.HandleFunc("/api/notifications", server.handleGetNotifications)
 	mux.HandleFunc("/api/notifications/consume", server.handleConsumeNotification)
+	mux.HandleFunc("/api/notifications/clear", server.handleClearNotifications)
 
 	// Conversation route
 	mux.HandleFunc("/api/conversation/", server.handleGetConversation)

@@ -180,6 +180,23 @@ func (s *Server) handleConsumeNotification(w http.ResponseWriter, r *http.Reques
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// handleClearNotifications marks all unconsumed notifications as consumed
+func (s *Server) handleClearNotifications(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	engine := s.warren.GetNotificationEngine()
+	count, err := engine.MarkAllAsConsumed()
+	if err != nil {
+		http.Error(w, "Failed to clear notifications", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "cleared": count})
+}
+
 // handleGetConversation returns conversation history for an agent
 func (s *Server) handleGetConversation(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

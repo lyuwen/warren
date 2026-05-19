@@ -28,6 +28,7 @@ class WarrenApp {
         // Refresh buttons
         document.getElementById('refresh-agents').addEventListener('click', () => this.loadAgents());
         document.getElementById('refresh-notifications').addEventListener('click', () => this.loadNotifications());
+        document.getElementById('clear-notifications').addEventListener('click', () => this.clearAllNotifications());
         document.getElementById('refresh-servers').addEventListener('click', () => this.loadServers());
 
         // Back button
@@ -523,6 +524,22 @@ class WarrenApp {
             }
         } catch (error) {
             console.error('Failed to consume notification:', error);
+        }
+    }
+
+    async clearAllNotifications() {
+        try {
+            const response = await fetch('/api/notifications/clear', {
+                method: 'POST',
+            });
+
+            if (response.ok) {
+                this.loadNotifications();
+            } else {
+                console.error('Failed to clear notifications');
+            }
+        } catch (error) {
+            console.error('Failed to clear notifications:', error);
         }
     }
 

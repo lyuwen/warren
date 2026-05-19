@@ -266,9 +266,40 @@ func TestEngine_MarkAsConsumed(t *testing.T) {
 	}
 }
 
+func TestEngine_MarkAllAsConsumed(t *testing.T) {
+	store := setupTestStore(t)
+	engine := NewEngine(store)
+
+	// Create multiple notifications
+	engine.ProcessStateChange("agent-1", string(types.StateIdle), string(types.StateWaitingPermission))
+	engine.ProcessStateChange("agent-2", string(types.StateIdle), string(types.StateAskingQuestion))
+	engine.ProcessStateChange("agent-3", string(types.StateIdle), string(types.StateError))
+
+	notifications, _ := engine.GetUnconsumedNotifications()
+	if len(notifications) != 3 {
+		t.Fatalf("expected 3 notifications, got %d", len(notifications))
+	}
+
+	// Clear all
+	count, err := engine.MarkAllAsConsumed()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("expected 3 cleared, got %d", count)
+	}
+
+	// Verify all consumed
+	notifications, _ = engine.GetUnconsumedNotifications()
+	if len(notifications) != 0 {
+		t.Errorf("expected 0 unconsumed after clear all, got %d", len(notifications))
+	}
+}
+
 func TestEngine_MarkAsConsumed_NotFound(t *testing.T) {
 	store := setupTestStore(t)
 	engine := NewEngine(store)
+
 
 	// Try to mark non-existent notification as consumed
 	err := engine.MarkAsConsumed("agent-1", "permission_required", time.Now())

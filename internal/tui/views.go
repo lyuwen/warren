@@ -161,10 +161,21 @@ func (m Model) renderNotifications() string {
 		b.WriteString(normalItemStyle.Render("No notifications"))
 		b.WriteString("\n")
 	} else {
-		for _, notif := range m.notifications {
-			b.WriteString(notificationBadgeStyle.Render("!"))
-			b.WriteString(" ")
-			b.WriteString(normalItemStyle.Render(notif))
+		for i, notif := range m.notifications {
+			cursor := "  "
+			if i == m.selectedNotif {
+				cursor = "> "
+			}
+			line := fmt.Sprintf("[%s] %s: %s", notif.NotifType, notif.AgentID, notif.Message)
+			if i == m.selectedNotif {
+				b.WriteString(cursor)
+				b.WriteString(selectedItemStyle.Render(line))
+			} else {
+				b.WriteString(cursor)
+				b.WriteString(notificationBadgeStyle.Render("!"))
+				b.WriteString(" ")
+				b.WriteString(normalItemStyle.Render(line))
+			}
 			b.WriteString("\n")
 		}
 	}
@@ -172,7 +183,7 @@ func (m Model) renderNotifications() string {
 	b.WriteString("\n")
 
 	// Help text
-	help := helpStyle.Render("←/esc: back • q: quit")
+	help := helpStyle.Render("j/k: navigate • x: clear selected • C: clear all • ←/esc: back • q: quit")
 	b.WriteString(help)
 
 	return borderStyle.Render(b.String())

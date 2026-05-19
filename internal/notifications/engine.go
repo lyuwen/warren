@@ -192,6 +192,28 @@ func (e *Engine) MarkAsConsumed(agentID string, notifType string, timestamp time
 	return fmt.Errorf("notification not found or already consumed")
 }
 
+// MarkAllAsConsumed marks all unconsumed notifications as consumed
+func (e *Engine) MarkAllAsConsumed() (int, error) {
+	unconsumed, err := e.GetUnconsumedNotifications()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get unconsumed notifications: %w", err)
+	}
+
+	count := 0
+	now := time.Now()
+	for _, notif := range unconsumed {
+		consumed := *notif
+		consumed.Consumed = true
+		consumed.ConsumedAt = &now
+		if err := e.store.AppendNotification(&consumed); err != nil {
+			return count, fmt.Errorf("failed to consume notification: %w", err)
+		}
+		count++
+	}
+
+	return count, nil
+}
+
 // NotificationChannel returns a channel for real-time notification updates
 func (e *Engine) NotificationChannel() <-chan *events.NotificationEvent {
 	return e.notificationChan

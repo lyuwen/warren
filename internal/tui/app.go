@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lfu/warren/internal/claude"
 	"github.com/lfu/warren/internal/core"
+	"github.com/lfu/warren/internal/events"
 )
 
 // View represents different screens in the TUI
@@ -27,7 +28,8 @@ type Model struct {
 	sessionList          []string // List of agent IDs
 	selectedIndex        int
 	selectedAgentID      string
-	notifications        []string
+	notifications        []*events.NotificationEvent
+	selectedNotif        int
 	conversationMessages []*claude.Message
 	conversationScroll   int
 	conversationError    string
@@ -103,6 +105,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.conversationScroll > 0 {
 				m.conversationScroll--
 			}
+		} else if m.currentView == ViewNotifications {
+			if m.selectedNotif > 0 {
+				m.selectedNotif--
+			}
 		} else if m.selectedIndex > 0 {
 			m.selectedIndex--
 			m.updateSelectedAgent()
@@ -114,6 +120,11 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			maxScroll := len(m.conversationMessages) - 1
 			if m.conversationScroll < maxScroll {
 				m.conversationScroll++
+			}
+		} else if m.currentView == ViewNotifications {
+			maxNotif := len(m.notifications) - 1
+			if m.selectedNotif < maxNotif {
+				m.selectedNotif++
 			}
 		} else {
 			maxIndex := len(m.sessionList) - 1
@@ -147,6 +158,28 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "n":
 		m.currentView = ViewNotifications
+		m.selectedNotif = 0
+		return m, nil
+
+	case "x":
+		if m.currentView == ViewNotifications && len(m.notifications) > 0 && m.selectedNotif < len(m.notifications) {
+			notif := m.notifications[m.selectedNotif]
+			engine := m.warren.GetNotificationEngine()
+			engine.MarkAsConsumed(notif.AgentID, notif.NotifType, notif.Timestamp)
+			m.refreshData()
+			if m.selectedNotif >= len(m.notifications) && m.selectedNotif > 0 {
+				m.selectedNotif--
+			}
+		}
+		return m, nil
+
+	case "C":
+		if m.currentView == ViewNotifications && len(m.notifications) > 0 {
+			engine := m.warren.GetNotificationEngine()
+			engine.MarkAllAsConsumed()
+			m.refreshData()
+			m.selectedNotif = 0
+		}
 		return m, nil
 
 	case "tab":
@@ -181,10 +214,7 @@ func (m *Model) refreshData() {
 	// Refresh notifications
 	notifs, err := m.warren.GetUnconsumedNotifications()
 	if err == nil {
-		m.notifications = make([]string, 0, len(notifs))
-		for _, notif := range notifs {
-			m.notifications = append(m.notifications, fmt.Sprintf("[%s] %s", notif.AgentID, notif.Message))
-		}
+		m.notifications = notifs
 	}
 }
 
