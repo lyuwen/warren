@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -68,6 +69,8 @@ type Store struct {
 	pruningInterval time.Duration
 	retentionPeriod time.Duration
 	stopPruning     chan struct{}
+	closeOnce       sync.Once
+	pruningOnce     sync.Once
 }
 
 // StoreConfig configures the event store
@@ -155,8 +158,9 @@ func (s *Store) initialize() error {
 
 // Close closes the database connection
 func (s *Store) Close() error {
-	// Stop pruning job if running
-	close(s.stopPruning)
+	s.closeOnce.Do(func() {
+		close(s.stopPruning)
+	})
 	return s.db.Close()
 }
 
@@ -409,23 +413,26 @@ func (s *Store) PruneOldEvents(olderThan time.Duration) (int, error) {
 
 // StartPruningJob starts a background goroutine that periodically prunes old events
 // The job runs at the configured pruning interval and deletes events older than the retention period
+// Safe to call multiple times; subsequent calls are no-ops.
 func (s *Store) StartPruningJob() {
-	go func() {
-		ticker := time.NewTicker(s.pruningInterval)
-		defer ticker.Stop()
+	s.pruningOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(s.pruningInterval)
+			defer ticker.Stop()
 
-		// Run initial pruning immediately
-		s.runPruning()
+			// Run initial pruning immediately
+			s.runPruning()
 
-		for {
-			select {
-			case <-ticker.C:
-				s.runPruning()
-			case <-s.stopPruning:
-				return
+			for {
+				select {
+				case <-ticker.C:
+					s.runPruning()
+				case <-s.stopPruning:
+					return
+				}
 			}
-		}
-	}()
+		}()
+	})
 }
 
 // runPruning executes a single pruning cycle with logging
