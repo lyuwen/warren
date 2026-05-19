@@ -30,7 +30,6 @@ type Warren struct {
 	minConfidence          float64
 	registryPath           string
 	cacheTTL               time.Duration
-	registryPruneThreshold time.Duration
 
 	// Session tracking
 	sessions        map[string]*MonitoredSession
@@ -134,11 +133,6 @@ func NewWarren(config *Config) (*Warren, error) {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// Set default ConfigDir if not provided
-	if config.ConfigDir == "" {
-		config.ConfigDir = ".warren"
-	}
-
 	// Initialize event store with retention configuration
 	storeConfig := &events.StoreConfig{
 		DBPath:          config.DBPath,
@@ -194,7 +188,6 @@ func NewWarren(config *Config) (*Warren, error) {
 		minConfidence:          config.MinConfidence,
 		registryPath:           registryPath,
 		cacheTTL:               config.CacheTTL,
-		registryPruneThreshold: config.RegistryPruneThreshold,
 		sessions:               make(map[string]*MonitoredSession),
 		sessionRegistry:        sessionRegistry,
 		serverRegistry:         serverRegistry,
