@@ -248,45 +248,6 @@ func TestStore_GetUnconsumedNotifications(t *testing.T) {
 	}
 }
 
-func TestStore_CleanupOldEvents(t *testing.T) {
-	tmpFile := t.TempDir() + "/test.db"
-	store, err := NewStore(tmpFile)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
-
-	// Add old and new events
-	oldEvent := &AgentActivityEvent{
-		AgentID:   "test-agent",
-		Timestamp: time.Now().AddDate(0, 0, -40), // 40 days ago
-	}
-
-	newEvent := &AgentActivityEvent{
-		AgentID:   "test-agent",
-		Timestamp: time.Now(),
-	}
-
-	store.AppendActivity(oldEvent)
-	store.AppendActivity(newEvent)
-
-	// Cleanup events older than 30 days
-	deleted, err := store.CleanupOldEvents(30)
-	if err != nil {
-		t.Fatalf("Failed to cleanup old events: %v", err)
-	}
-
-	if deleted != 1 {
-		t.Errorf("Expected 1 deleted event, got %d", deleted)
-	}
-
-	// Verify only new event remains
-	count, _ := store.Count()
-	if count != 1 {
-		t.Errorf("Expected 1 remaining event, got %d", count)
-	}
-}
-
 func TestStore_Count(t *testing.T) {
 	tmpFile := t.TempDir() + "/test.db"
 	store, err := NewStore(tmpFile)

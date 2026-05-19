@@ -366,23 +366,6 @@ func (s *Store) GetUnconsumedNotifications() ([]*NotificationEvent, error) {
 	return notifications, nil
 }
 
-// CleanupOldEvents removes events older than the retention period
-func (s *Store) CleanupOldEvents(retentionDays int) (int64, error) {
-	cutoff := time.Now().AddDate(0, 0, -retentionDays)
-
-	result, err := s.db.Exec("DELETE FROM events WHERE timestamp < ?", cutoff)
-	if err != nil {
-		return 0, fmt.Errorf("failed to cleanup old events: %w", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("failed to get rows affected: %w", err)
-	}
-
-	return rowsAffected, nil
-}
-
 // Count returns the total number of events
 func (s *Store) Count() (int64, error) {
 	var count int64
