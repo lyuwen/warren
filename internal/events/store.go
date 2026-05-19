@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -346,13 +347,17 @@ func (s *Store) GetUnconsumedNotifications() ([]*NotificationEvent, error) {
 		}
 	}
 
-	// Return only unconsumed notifications
+	// Return only unconsumed notifications, sorted by timestamp
 	notifications := make([]*NotificationEvent, 0)
 	for _, notif := range notifMap {
 		if !notif.Consumed {
 			notifications = append(notifications, notif)
 		}
 	}
+
+	sort.Slice(notifications, func(i, j int) bool {
+		return notifications[i].Timestamp.Before(notifications[j].Timestamp)
+	})
 
 	return notifications, nil
 }
