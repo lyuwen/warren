@@ -29,18 +29,37 @@ type Engine struct {
 
 // NewEngine creates a new notification engine
 func NewEngine(store *events.Store) *Engine {
-	return &Engine{
+	e := &Engine{
 		store:            store,
 		lastKnownStates:  make(map[string]string),
 		notificationChan: make(chan *events.NotificationEvent, 100),
 	}
+
+	// Seed lastKnownStates from existing unconsumed notifications so
+	// restarting the app doesn't create duplicate notifications for
+	// states that were already notified.
+	if notifs, err := store.GetUnconsumedNotifications(); err == nil {
+		for _, notif := range notifs {
+			if toState, ok := notif.Metadata["to_state"]; ok {
+				e.lastKnownStates[notif.AgentID] = toState
+			}
+		}
+	}
+
+	return e
 }
 
 // ProcessStateChange checks if a state transition should trigger a notification
 func (e *Engine) ProcessStateChange(agentID string, fromState, toState string) error {
 	e.mu.Lock()
+	prevState := e.lastKnownStates[agentID]
 	e.lastKnownStates[agentID] = toState
 	e.mu.Unlock()
+
+	// Skip if the state hasn't actually changed from what we last saw
+	if prevState == toState {
+		return nil
+	}
 
 	// Check if this state transition should trigger a notification
 	trigger, shouldNotify := e.shouldNotify(toState)
