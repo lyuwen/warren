@@ -18,6 +18,7 @@ const (
 	ViewAgentDetail
 	ViewConversation
 	ViewNotifications
+	ViewTopology
 )
 
 // Model is the main Bubble Tea model
@@ -37,18 +38,32 @@ type Model struct {
 	height               int
 	err                  error
 	quitting             bool
+
+	// Topology view fields
+	topologyNodes        []topologyNode
+	topologyCursor       int
+	topologyExpanded     map[string]bool
+	topologyFilterMode   bool
+	topologyFilterServer string
+	topologyFilterState  string // "all", "idle", "thinking", "error"
 }
 
 // NewModel creates a new TUI model
 func NewModel(warren *core.Warren) Model {
 	return Model{
-		warren:              warren,
-		conversationService: core.NewConversationServiceWithTTL(warren.CacheTTL()),
-		currentView:         ViewSessionList,
-		sessionList:         []string{},
-		selectedIndex:       0,
-		width:               80,
-		height:              24,
+		warren:               warren,
+		conversationService:  core.NewConversationServiceWithTTL(warren.CacheTTL()),
+		currentView:          ViewSessionList,
+		sessionList:          []string{},
+		selectedIndex:        0,
+		width:                80,
+		height:               24,
+		topologyExpanded:     make(map[string]bool),
+		topologyNodes:        []topologyNode{},
+		topologyCursor:       0,
+		topologyFilterMode:   false,
+		topologyFilterServer: "",
+		topologyFilterState:  "all",
 	}
 }
 
@@ -109,6 +124,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.selectedNotif > 0 {
 				m.selectedNotif--
 			}
+		} else if m.currentView == ViewTopology {
+			if m.topologyCursor > 0 {
+				m.topologyCursor--
+			}
 		} else if m.selectedIndex > 0 {
 			m.selectedIndex--
 			m.updateSelectedAgent()
@@ -126,6 +145,11 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.selectedNotif < maxNotif {
 				m.selectedNotif++
 			}
+		} else if m.currentView == ViewTopology {
+			maxCursor := len(m.topologyNodes) - 1
+			if m.topologyCursor < maxCursor {
+				m.topologyCursor++
+			}
 		} else {
 			maxIndex := len(m.sessionList) - 1
 			if m.selectedIndex < maxIndex {
@@ -136,7 +160,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "enter", "right", "l":
-		if m.currentView == ViewSessionList && len(m.sessionList) > 0 {
+		if m.currentView == ViewTopology {
+			m.toggleTopologyNode()
+		} else if m.currentView == ViewSessionList && len(m.sessionList) > 0 {
 			m.currentView = ViewAgentDetail
 		}
 		return m, nil
@@ -159,6 +185,62 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "n":
 		m.currentView = ViewNotifications
 		m.selectedNotif = 0
+		return m, nil
+
+	case "t":
+		if m.currentView == ViewTopology {
+			m.currentView = ViewSessionList
+		} else {
+			m.currentView = ViewTopology
+			m.refreshTopologyData()
+		}
+		return m, nil
+
+	case "f":
+		if m.currentView == ViewTopology {
+			m.topologyFilterMode = !m.topologyFilterMode
+			if !m.topologyFilterMode {
+				// Clear filters when exiting filter mode
+				m.topologyFilterServer = ""
+				m.topologyFilterState = "all"
+				m.refreshTopologyData()
+			}
+		}
+		return m, nil
+
+	case "s":
+		if m.currentView == ViewTopology && m.topologyFilterMode {
+			// Cycle through server filter presets
+			// For now, just toggle between "" (all) and "local"
+			if m.topologyFilterServer == "" {
+				m.topologyFilterServer = "local"
+			} else {
+				m.topologyFilterServer = ""
+			}
+			m.refreshTopologyData()
+		}
+		return m, nil
+
+	case "a":
+		if m.currentView == ViewTopology && m.topologyFilterMode {
+			// Cycle through agent states
+			states := []string{"all", "idle", "thinking", "error"}
+			currentIdx := 0
+			for i, s := range states {
+				if s == m.topologyFilterState {
+					currentIdx = i
+					break
+				}
+			}
+			m.topologyFilterState = states[(currentIdx+1)%len(states)]
+			m.refreshTopologyData()
+		}
+		return m, nil
+
+	case "r":
+		if m.currentView == ViewTopology {
+			m.refreshTopologyData()
+		}
 		return m, nil
 
 	case "x":
@@ -184,9 +266,11 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "tab":
 		// Cycle through views
-		m.currentView = (m.currentView + 1) % 4
+		m.currentView = (m.currentView + 1) % 5 // Now 5 views including topology
 		if m.currentView == ViewConversation && m.selectedAgentID != "" {
 			m.loadConversation()
+		} else if m.currentView == ViewTopology {
+			m.refreshTopologyData()
 		}
 		return m, nil
 	}
@@ -287,6 +371,8 @@ func (m Model) View() string {
 		return m.renderConversation()
 	case ViewNotifications:
 		return m.renderNotifications()
+	case ViewTopology:
+		return renderTopologyTree(m.topologyNodes, m.topologyCursor, m.width, m.height, m.topologyFilterMode, m.topologyFilterServer, m.topologyFilterState)
 	default:
 		return "Unknown view\n"
 	}

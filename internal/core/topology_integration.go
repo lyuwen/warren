@@ -38,6 +38,31 @@ func (w *Warren) GetSession(agentID string) (*AgentSession, error) {
 	}, nil
 }
 
+// GetTopology returns the complete topology for all servers
+func (w *Warren) GetTopology() ([]*tmux.Topology, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	registry := w.serverRegistry
+	if registry == nil {
+		return nil, fmt.Errorf("no server registry available")
+	}
+
+	topologies := make([]*tmux.Topology, 0)
+
+	for _, server := range registry.List() {
+		client := TmuxClientForServer(server)
+		topology, err := client.DiscoverTopology(server.Name)
+		if err != nil {
+			// Log error but continue with other servers
+			continue
+		}
+		topologies = append(topologies, topology)
+	}
+
+	return topologies, nil
+}
+
 // GetServer retrieves a server by name
 func (w *Warren) GetServer(serverName string) (*Server, error) {
 	// Try registry first

@@ -54,6 +54,11 @@ func NewServer(config *Config) *Server {
 	mux.HandleFunc("/api/notifications/consume", server.handleConsumeNotification)
 	mux.HandleFunc("/api/notifications/clear", server.handleClearNotifications)
 
+	// Topology routes
+	mux.HandleFunc("/api/topology", server.handleGetTopology)
+	mux.HandleFunc("/api/topology/servers/", server.handleGetTopologyServer)
+	mux.HandleFunc("/api/topology/sessions/", server.handleGetTopologySession)
+
 	// Conversation route
 	mux.HandleFunc("/api/conversation/", server.handleGetConversation)
 
