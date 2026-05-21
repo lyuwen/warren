@@ -16,6 +16,7 @@ Warren is a central hub for supervising and interacting with distributed coding-
 - ✅ **Notification Engine** - Alerts on actionable states (permission required, questions, errors)
 - ✅ **Terminal UI** - Keyboard-driven interface with Bubble Tea and conversation viewer
 - ✅ **Web Interface** - Real-time web dashboard with WebSocket updates and conversation display
+- ✅ **Topology View** - Hierarchical visualization of tmux infrastructure with agent state enrichment and filtering (TUI: press 't', Web: GET /api/topology)
 
 ## Quick Start
 
@@ -48,7 +49,51 @@ make run-tui
 # Or: ./warren-tui
 # Navigate with ↑/↓, Enter, Tab, q
 # Press 'c' to view conversation history for selected agent
+# Press 't' to view topology (servers, sessions, windows, panes)
+# Press 'f' in topology view to filter by server or agent state
 ```
+
+**See [Getting Started Guide](docs/getting-started.md) for detailed instructions.**
+
+## Topology View
+
+Warren provides a hierarchical visualization of your tmux infrastructure with real-time agent state information.
+
+**Terminal UI:**
+```bash
+# Start warren-tui and press 't' to view topology
+./warren-tui
+
+# Navigation:
+# ↑/↓ - Navigate nodes
+# Enter - Expand/collapse
+# f - Toggle filter mode
+# s - Filter by server name (in filter mode)
+# a - Filter by agent state (in filter mode)
+# r - Refresh topology
+# t - Toggle back to session list
+```
+
+**Web API:**
+```bash
+# Get complete topology
+curl http://localhost:8080/api/topology | jq '.'
+
+# Get topology for specific server
+curl http://localhost:8080/api/topology/servers/localhost | jq '.'
+
+# Get topology for specific session
+curl http://localhost:8080/api/topology/sessions/\$0 | jq '.'
+```
+
+**Features:**
+- 📡 Hierarchical tree view (servers → sessions → windows → panes)
+- 🎯 Real-time agent state enrichment (idle, thinking, error, etc.)
+- 🔍 Filter by server name or agent state
+- 🔄 Live updates with refresh
+- 📊 JSON API for programmatic access
+
+See [TUI Topology Guide](docs/tui-topology-guide.md) and [Topology API Documentation](docs/api-topology.md) for details.
 
 **See [Getting Started Guide](docs/getting-started.md) for detailed instructions.**
 
@@ -68,12 +113,15 @@ The TUI provides keyboard-driven navigation:
 - ↑/↓: Navigate sessions
 - Enter: View details
 - c: View conversation history (from agent detail view)
+- t: View topology (hierarchical tree of servers/sessions/windows/panes)
+- f: Toggle filter mode in topology view
 - n: Notifications
 - q: Quit
 
 The web interface provides real-time updates at http://localhost:8080
 - Click on any agent to view details
 - Switch to "Conversation" tab to see full conversation history
+- GET /api/topology for programmatic access to topology data
 
 ## Phase 1 Implementation
 
@@ -267,6 +315,9 @@ Phase 2 will implement:
 - [CLAUDE.md](CLAUDE.md) - Project guide and working instructions
 - [design-review.md](design-review.md) - Complete design specification
 - [ROADMAP.md](ROADMAP.md) - Implementation roadmap with all phases
+- [Getting Started Guide](docs/getting-started.md) - Detailed setup and usage instructions
+- [Topology API Documentation](docs/api-topology.md) - REST API endpoints for topology data
+- [TUI Topology Guide](docs/tui-topology-guide.md) - Terminal UI topology view usage
 
 ## License
 
