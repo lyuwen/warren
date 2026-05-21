@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  warren-ssh-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: warren-ssh-test
+    ports:
+      - "2222:22"
+    volumes:
+      - ./test-data:/home/testuser/test-data
+    networks:
+      - warren-test
+    healthcheck:
+      test: ["CMD", "pgrep", "sshd"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+networks:
+  warren-test:
+    driver: bridge
