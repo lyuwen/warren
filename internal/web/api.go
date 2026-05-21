@@ -9,6 +9,7 @@ import (
 
 	"github.com/lfu/warren/internal/claude"
 	"github.com/lfu/warren/internal/core"
+	"github.com/lfu/warren/internal/tmux"
 )
 
 // handleGetServers returns all registered servers
@@ -298,4 +299,217 @@ func parseTimestamp(s string) (time.Time, error) {
 
 	// Try RFC3339Nano format
 	return time.Parse(time.RFC3339Nano, s)
+}
+
+// handleGetTopology returns the complete topology for all servers
+func (s *Server) handleGetTopology(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	topologies, err := s.warren.GetTopology()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get topology: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Get all monitored sessions to enrich topology with agent states
+	sessions := s.warren.GetAllSessions()
+	sessionMap := make(map[string]*core.MonitoredSession)
+	for _, sess := range sessions {
+		sessionMap[sess.PaneID] = sess
+	}
+
+	// Build response with hierarchical structure
+	response := map[string]interface{}{
+		"servers": buildTopologyResponse(topologies, sessionMap),
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// handleGetTopologyServer returns topology for a specific server
+func (s *Server) handleGetTopologyServer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract server name from path: /api/topology/servers/{name}
+	serverName := strings.TrimPrefix(r.URL.Path, "/api/topology/servers/")
+	if serverName == "" {
+		http.Error(w, "Server name required", http.StatusBadRequest)
+		return
+	}
+
+	topologies, err := s.warren.GetTopology()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get topology: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Find the requested server
+	var serverTopology *tmux.Topology
+	for _, topo := range topologies {
+		if topo.ServerName == serverName {
+			serverTopology = topo
+			break
+		}
+	}
+
+	if serverTopology == nil {
+		http.Error(w, "Server not found", http.StatusNotFound)
+		return
+	}
+
+	// Get monitored sessions for this server
+	sessions := s.warren.GetAllSessions()
+	sessionMap := make(map[string]*core.MonitoredSession)
+	for _, sess := range sessions {
+		if sess.ServerName == serverName {
+			sessionMap[sess.PaneID] = sess
+		}
+	}
+
+	// Build response
+	response := buildServerTopologyResponse(serverTopology, sessionMap)
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// handleGetTopologySession returns topology for a specific session
+func (s *Server) handleGetTopologySession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract session ID from path: /api/topology/sessions/{id}
+	sessionID := strings.TrimPrefix(r.URL.Path, "/api/topology/sessions/")
+	if sessionID == "" {
+		http.Error(w, "Session ID required", http.StatusBadRequest)
+		return
+	}
+
+	// Get the agent session
+	agentSession, err := s.warren.GetSession(sessionID)
+	if err != nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	// Get topology for the server
+	topologies, err := s.warren.GetTopology()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get topology: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Find the session in topology
+	var foundSession *tmux.TmuxSession
+	for _, topo := range topologies {
+		if topo.ServerName == agentSession.ServerName {
+			for _, sess := range topo.Sessions {
+				if sess.Name == agentSession.TmuxSessionName {
+					foundSession = sess
+					break
+				}
+			}
+		}
+	}
+
+	if foundSession == nil {
+		http.Error(w, "Session not found in topology", http.StatusNotFound)
+		return
+	}
+
+	// Get monitored sessions for enrichment
+	sessions := s.warren.GetAllSessions()
+	sessionMap := make(map[string]*core.MonitoredSession)
+	for _, sess := range sessions {
+		sessionMap[sess.PaneID] = sess
+	}
+
+	// Build response
+	response := map[string]interface{}{
+		"id":          foundSession.ID,
+		"name":        foundSession.Name,
+		"server":      agentSession.ServerName,
+		"windows":     buildWindowsResponse(foundSession.Windows, agentSession.ServerName, sessionMap),
+		"agent_state": string(agentSession.CurrentState),
+	}
+
+	respondJSON(w, http.StatusOK, response)
+}
+
+// buildTopologyResponse builds the topology response structure
+func buildTopologyResponse(topologies []*tmux.Topology, sessionMap map[string]*core.MonitoredSession) []map[string]interface{} {
+	servers := make([]map[string]interface{}, 0, len(topologies))
+
+	for _, topo := range topologies {
+		servers = append(servers, buildServerTopologyResponse(topo, sessionMap))
+	}
+
+	return servers
+}
+
+// buildServerTopologyResponse builds a server topology response
+func buildServerTopologyResponse(topo *tmux.Topology, sessionMap map[string]*core.MonitoredSession) map[string]interface{} {
+	sessions := make([]map[string]interface{}, 0, len(topo.Sessions))
+
+	for _, sess := range topo.Sessions {
+		sessions = append(sessions, map[string]interface{}{
+			"id":       sess.ID,
+			"name":     sess.Name,
+			"created":  sess.Created,
+			"attached": sess.Attached,
+			"windows":  buildWindowsResponse(sess.Windows, topo.ServerName, sessionMap),
+		})
+	}
+
+	return map[string]interface{}{
+		"name":     topo.ServerName,
+		"sessions": sessions,
+	}
+}
+
+// buildWindowsResponse builds windows response with panes
+func buildWindowsResponse(windows []*tmux.Window, serverName string, sessionMap map[string]*core.MonitoredSession) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(windows))
+
+	for _, win := range windows {
+		panes := make([]map[string]interface{}, 0, len(win.Panes))
+
+		for _, pane := range win.Panes {
+			paneData := map[string]interface{}{
+				"id":              pane.ID,
+				"index":           pane.Index,
+				"title":           pane.Title,
+				"width":           pane.Width,
+				"height":          pane.Height,
+				"active":          pane.Active,
+				"current_command": pane.CurrentCommand,
+				"current_path":    pane.CurrentPath,
+			}
+
+			// Add agent state if this pane is monitored
+			if sess, ok := sessionMap[pane.ID]; ok {
+				paneData["agent_state"] = string(sess.CurrentState)
+				paneData["agent_id"] = sess.AgentID
+			}
+
+			panes = append(panes, paneData)
+		}
+
+		result = append(result, map[string]interface{}{
+			"index":  win.Index,
+			"name":   win.Name,
+			"id":     win.ID,
+			"active": win.Active,
+			"panes":  panes,
+		})
+	}
+
+	return result
 }
