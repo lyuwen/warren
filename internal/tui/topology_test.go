@@ -251,3 +251,108 @@ func TestRenderTopologyNode(t *testing.T) {
 		})
 	}
 }
+
+func TestFilterTopologyByServer(t *testing.T) {
+	nodes := []topologyNode{
+		{nodeType: "server", name: "local", serverName: "local"},
+		{nodeType: "session", name: "main", serverName: "local"},
+		{nodeType: "server", name: "remote", serverName: "remote"},
+		{nodeType: "session", name: "test", serverName: "remote"},
+	}
+
+	m := &Model{
+		topologyFilterServer: "local",
+		topologyFilterState:  "all",
+	}
+
+	filtered := m.filterTopology(nodes)
+
+	// Should only have local server and session
+	if len(filtered) != 2 {
+		t.Errorf("Expected 2 nodes, got %d", len(filtered))
+	}
+
+	for _, node := range filtered {
+		if node.serverName != "local" {
+			t.Errorf("Expected server name 'local', got %s", node.serverName)
+		}
+	}
+}
+
+func TestFilterTopologyByState(t *testing.T) {
+	nodes := []topologyNode{
+		{nodeType: "server", name: "local", serverName: "local"},
+		{nodeType: "pane", name: "%1", serverName: "local", agentState: "idle"},
+		{nodeType: "pane", name: "%2", serverName: "local", agentState: "thinking"},
+		{nodeType: "pane", name: "%3", serverName: "local", agentState: "error"},
+	}
+
+	m := &Model{
+		topologyFilterServer: "",
+		topologyFilterState:  "idle",
+	}
+
+	filtered := m.filterTopology(nodes)
+
+	// Should have server and idle pane
+	foundIdle := false
+	for _, node := range filtered {
+		if node.nodeType == "pane" {
+			if node.agentState != "idle" {
+				t.Errorf("Expected only idle panes, got %s", node.agentState)
+			}
+			foundIdle = true
+		}
+	}
+
+	if !foundIdle {
+		t.Error("Expected to find idle pane")
+	}
+}
+
+func TestFilterTopologyCombined(t *testing.T) {
+	nodes := []topologyNode{
+		{nodeType: "server", name: "local", serverName: "local"},
+		{nodeType: "pane", name: "%1", serverName: "local", agentState: "idle"},
+		{nodeType: "pane", name: "%2", serverName: "local", agentState: "thinking"},
+		{nodeType: "server", name: "remote", serverName: "remote"},
+		{nodeType: "pane", name: "%3", serverName: "remote", agentState: "idle"},
+	}
+
+	m := &Model{
+		topologyFilterServer: "local",
+		topologyFilterState:  "idle",
+	}
+
+	filtered := m.filterTopology(nodes)
+
+	// Should only have local server and local idle pane
+	for _, node := range filtered {
+		if node.serverName != "local" {
+			t.Errorf("Expected server name 'local', got %s", node.serverName)
+		}
+		if node.nodeType == "pane" && node.agentState != "idle" {
+			t.Errorf("Expected agent state 'idle', got %s", node.agentState)
+		}
+	}
+}
+
+func TestFilterTopologyNoFilters(t *testing.T) {
+	nodes := []topologyNode{
+		{nodeType: "server", name: "local", serverName: "local"},
+		{nodeType: "pane", name: "%1", serverName: "local", agentState: "idle"},
+		{nodeType: "server", name: "remote", serverName: "remote"},
+	}
+
+	m := &Model{
+		topologyFilterServer: "",
+		topologyFilterState:  "all",
+	}
+
+	filtered := m.filterTopology(nodes)
+
+	// Should return all nodes
+	if len(filtered) != len(nodes) {
+		t.Errorf("Expected %d nodes, got %d", len(nodes), len(filtered))
+	}
+}

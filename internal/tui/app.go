@@ -43,21 +43,27 @@ type Model struct {
 	topologyNodes        []topologyNode
 	topologyCursor       int
 	topologyExpanded     map[string]bool
+	topologyFilterMode   bool
+	topologyFilterServer string
+	topologyFilterState  string // "all", "idle", "thinking", "error"
 }
 
 // NewModel creates a new TUI model
 func NewModel(warren *core.Warren) Model {
 	return Model{
-		warren:              warren,
-		conversationService: core.NewConversationServiceWithTTL(warren.CacheTTL()),
-		currentView:         ViewSessionList,
-		sessionList:         []string{},
-		selectedIndex:       0,
-		width:               80,
-		height:              24,
-		topologyExpanded:    make(map[string]bool),
-		topologyNodes:       []topologyNode{},
-		topologyCursor:      0,
+		warren:               warren,
+		conversationService:  core.NewConversationServiceWithTTL(warren.CacheTTL()),
+		currentView:          ViewSessionList,
+		sessionList:          []string{},
+		selectedIndex:        0,
+		width:                80,
+		height:               24,
+		topologyExpanded:     make(map[string]bool),
+		topologyNodes:        []topologyNode{},
+		topologyCursor:       0,
+		topologyFilterMode:   false,
+		topologyFilterServer: "",
+		topologyFilterState:  "all",
 	}
 }
 
@@ -186,6 +192,47 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.currentView = ViewSessionList
 		} else {
 			m.currentView = ViewTopology
+			m.refreshTopologyData()
+		}
+		return m, nil
+
+	case "f":
+		if m.currentView == ViewTopology {
+			m.topologyFilterMode = !m.topologyFilterMode
+			if !m.topologyFilterMode {
+				// Clear filters when exiting filter mode
+				m.topologyFilterServer = ""
+				m.topologyFilterState = "all"
+				m.refreshTopologyData()
+			}
+		}
+		return m, nil
+
+	case "s":
+		if m.currentView == ViewTopology && m.topologyFilterMode {
+			// Cycle through server filter presets
+			// For now, just toggle between "" (all) and "local"
+			if m.topologyFilterServer == "" {
+				m.topologyFilterServer = "local"
+			} else {
+				m.topologyFilterServer = ""
+			}
+			m.refreshTopologyData()
+		}
+		return m, nil
+
+	case "a":
+		if m.currentView == ViewTopology && m.topologyFilterMode {
+			// Cycle through agent states
+			states := []string{"all", "idle", "thinking", "error"}
+			currentIdx := 0
+			for i, s := range states {
+				if s == m.topologyFilterState {
+					currentIdx = i
+					break
+				}
+			}
+			m.topologyFilterState = states[(currentIdx+1)%len(states)]
 			m.refreshTopologyData()
 		}
 		return m, nil
@@ -325,7 +372,7 @@ func (m Model) View() string {
 	case ViewNotifications:
 		return m.renderNotifications()
 	case ViewTopology:
-		return renderTopologyTree(m.topologyNodes, m.topologyCursor, m.width, m.height)
+		return renderTopologyTree(m.topologyNodes, m.topologyCursor, m.width, m.height, m.topologyFilterMode, m.topologyFilterServer, m.topologyFilterState)
 	default:
 		return "Unknown view\n"
 	}

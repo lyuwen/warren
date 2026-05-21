@@ -121,15 +121,37 @@ func flattenTopology(topologies []*tmux.Topology, sessions []*core.MonitoredSess
 }
 
 // renderTopologyTree renders the topology tree as a string
-func renderTopologyTree(nodes []topologyNode, cursor int, width int, height int) string {
+func renderTopologyTree(nodes []topologyNode, cursor int, width int, height int, filterMode bool, filterServer string, filterState string) string {
 	var b strings.Builder
 
 	// Header
 	b.WriteString("┌─ Warren Topology ─────────────────────────────────────┐\n")
-	b.WriteString("│                                                        │\n")
+
+	// Filter status line
+	if filterMode {
+		filterLine := "│ FILTER: "
+		if filterServer != "" {
+			filterLine += fmt.Sprintf("Server=%s ", filterServer)
+		}
+		if filterState != "all" {
+			filterLine += fmt.Sprintf("State=%s ", filterState)
+		}
+		if filterServer == "" && filterState == "all" {
+			filterLine += "(none) "
+		}
+		// Pad to width
+		padding := width - len(filterLine) - 1
+		if padding < 0 {
+			padding = 0
+		}
+		filterLine += strings.Repeat(" ", padding) + "│"
+		b.WriteString(filterLine + "\n")
+	} else {
+		b.WriteString("│                                                        │\n")
+	}
 
 	// Calculate visible range (simple scrolling)
-	visibleHeight := height - 6 // Account for header and footer
+	visibleHeight := height - 7 // Account for header, filter line, and footer
 	startIdx := 0
 	endIdx := len(nodes)
 
@@ -140,41 +162,57 @@ func renderTopologyTree(nodes []topologyNode, cursor int, width int, height int)
 		endIdx = startIdx + visibleHeight
 	}
 
-	// Render nodes
-	for i := startIdx; i < endIdx && i < len(nodes); i++ {
-		node := nodes[i]
+	// Show "No results" if filtered and empty
+	if len(nodes) == 0 {
+		b.WriteString("│                                                        │\n")
+		b.WriteString("│                   No results found                     │\n")
+		b.WriteString("│                                                        │\n")
+		for i := 0; i < visibleHeight-3; i++ {
+			b.WriteString("│")
+			b.WriteString(strings.Repeat(" ", width-2))
+			b.WriteString("│\n")
+		}
+	} else {
+		// Render nodes
+		for i := startIdx; i < endIdx && i < len(nodes); i++ {
+			node := nodes[i]
 
-		// Build line
-		line := renderTopologyNode(node, i == cursor)
+			// Build line
+			line := renderTopologyNode(node, i == cursor)
 
-		// Truncate if too long
-		if len(line) > width-4 {
-			line = line[:width-7] + "..."
+			// Truncate if too long
+			if len(line) > width-4 {
+				line = line[:width-7] + "..."
+			}
+
+			// Pad to width
+			padding := width - len(line) - 4
+			if padding < 0 {
+				padding = 0
+			}
+
+			b.WriteString("│ ")
+			b.WriteString(line)
+			b.WriteString(strings.Repeat(" ", padding))
+			b.WriteString(" │\n")
 		}
 
-		// Pad to width
-		padding := width - len(line) - 4
-		if padding < 0 {
-			padding = 0
+		// Fill remaining space
+		for i := endIdx - startIdx; i < visibleHeight; i++ {
+			b.WriteString("│")
+			b.WriteString(strings.Repeat(" ", width-2))
+			b.WriteString("│\n")
 		}
-
-		b.WriteString("│ ")
-		b.WriteString(line)
-		b.WriteString(strings.Repeat(" ", padding))
-		b.WriteString(" │\n")
-	}
-
-	// Fill remaining space
-	for i := endIdx - startIdx; i < visibleHeight; i++ {
-		b.WriteString("│")
-		b.WriteString(strings.Repeat(" ", width-2))
-		b.WriteString("│\n")
 	}
 
 	// Footer
 	b.WriteString("│                                                        │\n")
-	b.WriteString("│ [↑↓] Navigate [Enter] Expand/Collapse [t] Toggle      │\n")
-	b.WriteString("│ [r] Refresh [q] Quit                                   │\n")
+	if filterMode {
+		b.WriteString("│ [s] Server [a] State [f] Exit Filter [Esc] Clear      │\n")
+	} else {
+		b.WriteString("│ [↑↓] Navigate [Enter] Expand/Collapse [f] Filter      │\n")
+	}
+	b.WriteString("│ [t] Toggle View [r] Refresh [q] Quit                   │\n")
 	b.WriteString("└────────────────────────────────────────────────────────┘\n")
 
 	return b.String()
@@ -252,7 +290,47 @@ func (m *Model) refreshTopologyData() {
 	}
 
 	// Flatten topology
-	m.topologyNodes = flattenTopology(topologies, sessions, m.topologyExpanded)
+	nodes := flattenTopology(topologies, sessions, m.topologyExpanded)
+
+	// Apply filters
+	m.topologyNodes = m.filterTopology(nodes)
+}
+
+// filterTopology filters topology nodes based on active filters
+func (m *Model) filterTopology(nodes []topologyNode) []topologyNode {
+	// No filtering if no filters active
+	if m.topologyFilterServer == "" && m.topologyFilterState == "all" {
+		return nodes
+	}
+
+	filtered := make([]topologyNode, 0)
+
+	for _, node := range nodes {
+		// Filter by server name (case-insensitive partial match)
+		if m.topologyFilterServer != "" {
+			if !strings.Contains(
+				strings.ToLower(node.serverName),
+				strings.ToLower(m.topologyFilterServer)) {
+				continue
+			}
+		}
+
+		// Filter by agent state (only applies to panes)
+		if m.topologyFilterState != "all" {
+			if node.nodeType == "pane" {
+				// Only show panes with matching state
+				if node.agentState != m.topologyFilterState {
+					continue
+				}
+			}
+			// For non-pane nodes, include them if they're ancestors of matching panes
+			// This is a simplified approach - we include all non-pane nodes
+		}
+
+		filtered = append(filtered, node)
+	}
+
+	return filtered
 }
 
 // toggleTopologyNode toggles the expanded state of the current node
