@@ -5,33 +5,17 @@ import (
 	"time"
 )
 
-// Discovery configuration and state
-type discoveryState struct {
-	agentDiscovery    *AgentDiscovery
-	discoveryInterval time.Duration
-	enabled           bool
-}
-
 // initializeDiscovery sets up the discovery service for Warren
 func (w *Warren) initializeDiscovery(discoveryConfig *DiscoveryConfig) {
 	// Create discovery service
-	discovery := NewAgentDiscovery(w.tmuxClient)
-
-	// Store discovery state
-	discoveryStates[w] = &discoveryState{
-		agentDiscovery:    discovery,
-		discoveryInterval: discoveryConfig.DiscoveryInterval,
-		enabled:           discoveryConfig.EnableAutoDiscovery,
-	}
+	w.agentDiscovery = NewAgentDiscovery(w.tmuxClient)
+	w.discoveryInterval = discoveryConfig.DiscoveryInterval
+	w.discoveryEnabled = discoveryConfig.EnableAutoDiscovery
 }
-
-// Package-level map to store discovery state (workaround for linter issue)
-var discoveryStates = make(map[*Warren]*discoveryState)
 
 // runDiscovery discovers and registers agent sessions across all servers
 func (w *Warren) runDiscovery() error {
-	state, ok := discoveryStates[w]
-	if !ok || state.agentDiscovery == nil {
+	if w.agentDiscovery == nil {
 		return fmt.Errorf("discovery not initialized")
 	}
 
@@ -51,7 +35,7 @@ func (w *Warren) runDiscovery() error {
 		}
 
 		// Run agent discovery on this topology
-		results, err := state.agentDiscovery.DiscoverAll(topology, w.minConfidence)
+		results, err := w.agentDiscovery.DiscoverAll(topology, w.minConfidence)
 		if err != nil {
 			fmt.Printf("Warning: agent discovery failed for server %s: %v\n", server.Name, err)
 			continue
@@ -105,8 +89,7 @@ func (w *Warren) runDiscovery() error {
 
 // startDiscoveryLoop runs periodic agent discovery
 func (w *Warren) startDiscoveryLoop() {
-	state, ok := discoveryStates[w]
-	if !ok || state.discoveryInterval == 0 {
+	if w.discoveryInterval == 0 {
 		return // Discovery disabled
 	}
 
@@ -114,7 +97,7 @@ func (w *Warren) startDiscoveryLoop() {
 	go func() {
 		defer w.wg.Done()
 
-		ticker := time.NewTicker(state.discoveryInterval)
+		ticker := time.NewTicker(w.discoveryInterval)
 		defer ticker.Stop()
 
 		for {
@@ -133,9 +116,4 @@ func (w *Warren) startDiscoveryLoop() {
 // RunDiscovery manually triggers agent discovery (exposed for API)
 func (w *Warren) RunDiscovery() error {
 	return w.runDiscovery()
-}
-
-// cleanupDiscovery removes discovery state when Warren is stopped
-func (w *Warren) cleanupDiscovery() {
-	delete(discoveryStates, w)
 }

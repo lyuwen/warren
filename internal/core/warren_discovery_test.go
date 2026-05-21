@@ -93,18 +93,17 @@ func TestWarren_EnableDiscovery(t *testing.T) {
 		t.Fatalf("Failed to enable discovery: %v", err)
 	}
 
-	// Verify discovery state was created
-	state, ok := discoveryStates[warren]
-	if !ok {
-		t.Fatal("Discovery state not initialized")
-	}
-
-	if state.agentDiscovery == nil {
+	// Verify discovery state was initialized
+	if warren.agentDiscovery == nil {
 		t.Error("Agent discovery service not created")
 	}
 
-	if state.discoveryInterval != 5*time.Minute {
-		t.Errorf("Expected interval 5m, got %v", state.discoveryInterval)
+	if warren.discoveryInterval != 5*time.Minute {
+		t.Errorf("Expected interval 5m, got %v", warren.discoveryInterval)
+	}
+
+	if warren.discoveryEnabled {
+		t.Error("Expected discoveryEnabled to be false")
 	}
 }
 
@@ -164,18 +163,14 @@ func TestWarren_CleanupDiscovery(t *testing.T) {
 		t.Fatalf("Failed to enable discovery: %v", err)
 	}
 
-	// Verify state exists
-	if _, ok := discoveryStates[warren]; !ok {
-		t.Fatal("Discovery state not found")
+	// Verify discovery is initialized
+	if warren.agentDiscovery == nil {
+		t.Fatal("Discovery not initialized")
 	}
 
-	// Cleanup
-	warren.cleanupDiscovery()
-
-	// Verify state removed
-	if _, ok := discoveryStates[warren]; ok {
-		t.Error("Discovery state not cleaned up")
-	}
-
+	// Stop Warren (should clean up discovery)
 	warren.Stop()
+
+	// Discovery fields remain but Warren is stopped
+	// This is acceptable - no memory leak since Warren itself is being cleaned up
 }

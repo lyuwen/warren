@@ -37,6 +37,11 @@ type Warren struct {
 	serverRegistry  *ServerRegistry
 	mu              sync.RWMutex
 
+	// Agent discovery
+	agentDiscovery    *AgentDiscovery
+	discoveryInterval time.Duration
+	discoveryEnabled  bool
+
 	// Control
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -68,6 +73,10 @@ type Config struct {
 	EventPruningInterval time.Duration // How often to prune events (default: 24 hours)
 	CacheTTL             time.Duration // How long to cache conversation files (default: 5 seconds)
 	RegistryPruneThreshold time.Duration // How old sessions must be to prune (default: 24 hours)
+
+	// Agent discovery
+	EnableAutoDiscovery  bool          // Enable automatic agent discovery
+	DiscoveryInterval    time.Duration // How often to run discovery (default: 5 minutes)
 }
 
 // DefaultConfig returns sensible defaults
@@ -81,6 +90,8 @@ func DefaultConfig() *Config {
 		EventPruningInterval:   24 * time.Hour,      // daily
 		CacheTTL:               5 * time.Second,     // 5 seconds
 		RegistryPruneThreshold: 24 * time.Hour,      // 24 hours
+		EnableAutoDiscovery:    false,               // opt-in
+		DiscoveryInterval:      5 * time.Minute,     // 5 minutes
 	}
 }
 
