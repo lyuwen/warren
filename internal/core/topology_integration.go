@@ -106,9 +106,20 @@ func (w *Warren) GetPane(session *AgentSession, server *Server) (*tmux.Pane, err
 		return pane, nil
 	}
 
-	// For remote servers, we need SSH support
-	// TODO: Implement remote pane retrieval via SSH
-	return nil, fmt.Errorf("remote pane retrieval not yet implemented")
+	// For remote servers, use SSH to query topology
+	client := TmuxClientForServer(server)
+	topology, err := client.DiscoverTopology(server.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover remote topology: %w", err)
+	}
+
+	// Find the pane by ID in remote topology
+	pane, _, _, err := topology.FindPane(session.TmuxPaneID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find pane %s on remote server %s: %w", session.TmuxPaneID, server.Name, err)
+	}
+
+	return pane, nil
 }
 
 // GetPaneByID retrieves a tmux pane by its pane ID
