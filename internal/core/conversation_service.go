@@ -58,18 +58,20 @@ func NewConversationServiceWithTTL(cacheTTL time.Duration) *ConversationService 
 
 // GetConversationHistory returns the full conversation history for an agent
 func (cs *ConversationService) GetConversationHistory(session *AgentSession, server *Server, pane *tmux.Pane) ([]*claude.Message, error) {
-	// Get session ID and CWD
+	// Check if remote session - use remote reader for both session info and conversation
+	if server.Kind == ServerKindRemote {
+		sessionID, cwd, err := cs.getRemoteSessionInfo(server, pane)
+		if err != nil {
+			return nil, err
+		}
+		return cs.getRemoteConversation(server, sessionID, cwd)
+	}
+
+	// Local session - use local session mapper
 	sessionID, cwd, err := cs.getSessionInfo(pane)
 	if err != nil {
 		return nil, err
 	}
-
-	// Check if remote session
-	if server.Kind == ServerKindRemote {
-		return cs.getRemoteConversation(server, sessionID, cwd)
-	}
-
-	// Local session
 	return cs.getLocalConversation(sessionID, cwd)
 }
 
@@ -106,7 +108,7 @@ func (cs *ConversationService) SubscribeToUpdates(agentID string) <-chan string 
 	return ch
 }
 
-// getSessionInfo extracts session ID and CWD from pane
+// getSessionInfo extracts session ID and CWD from pane (local only)
 func (cs *ConversationService) getSessionInfo(pane *tmux.Pane) (string, string, error) {
 	if pane == nil {
 		return "", "", fmt.Errorf("no pane information")
@@ -127,6 +129,40 @@ func (cs *ConversationService) getSessionInfo(pane *tmux.Pane) (string, string, 
 	cwd, err := cs.sessionMapper.GetCWD(pid)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to get CWD: %w", err)
+	}
+
+	return sessionID, cwd, nil
+}
+
+// getRemoteSessionInfo extracts session ID and CWD from a remote pane via SSH
+func (cs *ConversationService) getRemoteSessionInfo(server *Server, pane *tmux.Pane) (string, string, error) {
+	if pane == nil {
+		return "", "", fmt.Errorf("no pane information")
+	}
+
+	pid := pane.PID
+	if pid == 0 {
+		return "", "", fmt.Errorf("no PID available")
+	}
+
+	cs.mu.RLock()
+	client, ok := cs.sshClients[server.Host]
+	cs.mu.RUnlock()
+
+	if !ok {
+		return "", "", fmt.Errorf("no SSH connection for host %s", server.Host)
+	}
+
+	remoteReader := claude.NewRemoteReader(client, server.Host)
+
+	sessionID, err := remoteReader.GetSessionID(pid)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get remote session ID: %w", err)
+	}
+
+	cwd, err := remoteReader.GetCWD(pid)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get remote CWD: %w", err)
 	}
 
 	return sessionID, cwd, nil
