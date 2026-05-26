@@ -193,8 +193,7 @@ func findRepoRoot(filePath string) string {
 
 	// Walk up the directory tree
 	for {
-		gitDir := filepath.Join(dir, ".git")
-		if _, err := os.Stat(gitDir); err == nil {
+		if isGitRepoRoot(dir) {
 			return dir
 		}
 
@@ -208,6 +207,38 @@ func findRepoRoot(filePath string) string {
 	}
 
 	return ""
+}
+
+// isGitRepoRoot reports whether dir contains a valid `.git` entry.
+//
+// A directory qualifies as a git repository root when either:
+//   - `.git/HEAD` exists as a file (standard repository), or
+//   - `.git` itself is a regular file (worktree pointer containing
+//     `gitdir: <path>`).
+//
+// A bare empty `.git` directory (such as a stale `/tmp/.git`) does not
+// qualify; checking only for the existence of `.git` would otherwise cause
+// findRepoRoot to incorrectly identify unrelated directories as repository
+// roots.
+func isGitRepoRoot(dir string) bool {
+	gitPath := filepath.Join(dir, ".git")
+	info, err := os.Lstat(gitPath)
+	if err != nil {
+		return false
+	}
+	if info.Mode().IsRegular() {
+		// Git worktree: .git is a file containing "gitdir: ..."
+		return true
+	}
+	if info.IsDir() {
+		// Regular repo: .git/HEAD must exist as a file
+		headInfo, err := os.Stat(filepath.Join(gitPath, "HEAD"))
+		if err != nil {
+			return false
+		}
+		return headInfo.Mode().IsRegular()
+	}
+	return false
 }
 
 // contains checks if a string slice contains a value

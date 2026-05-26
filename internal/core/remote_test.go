@@ -40,22 +40,28 @@ func TestConnectionPool_Creation(t *testing.T) {
 	}
 }
 
-// TestConnectionPool_RemoteServerPlaceholder tests remote server connection (placeholder)
-func TestConnectionPool_RemoteServerPlaceholder(t *testing.T) {
-	pool := NewConnectionPool(30 * time.Second)
+// TestConnectionPool_RemoteServerDialError verifies that Get attempts a real
+// SSH dial for a remote server and surfaces the underlying network error when
+// the host is unreachable. (Originally this test asserted the placeholder
+// "not yet implemented" error; that branch was removed when ConnectionPool.Get
+// was implemented in fix #2.)
+func TestConnectionPool_RemoteServerDialError(t *testing.T) {
+	// Short timeout so the test fails fast — we are not actually connecting
+	// to anything reachable.
+	pool := NewConnectionPool(200 * time.Millisecond)
 
 	remoteServer := &Server{
 		Name: "remote-1",
-		Host: "192.168.1.100",
+		// 127.0.0.1:1 is reliably refused on every dev machine and CI runner.
+		Host: "127.0.0.1",
 		User: "user",
-		Port: 22,
+		Port: 1,
 		Kind: ServerKindRemote,
 	}
 
-	// Should return error since SSH is not yet implemented
 	_, err := pool.Get(remoteServer)
 	if err == nil {
-		t.Error("Expected error for unimplemented SSH connection")
+		t.Fatal("expected a dial/handshake error for unreachable remote server, got nil")
 	}
 }
 
