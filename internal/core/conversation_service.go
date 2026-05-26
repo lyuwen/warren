@@ -162,8 +162,109 @@ func (cs *ConversationService) SubscribeToUpdates(
 	cs.subscriptions[agentID] = sub
 	cs.subMu.Unlock()
 
-	go cs.pollLoop(agentID, session, server, pane, interval, sub)
+	fetcher := func() ([]*claude.Message, error) {
+		return cs.GetConversationHistory(session, server, pane)
+	}
+	go cs.runFetcherLoop(agentID, fetcher, interval, sub)
 	return sub.ch, nil
+}
+
+// subscribeWithFetcher is the internal polling primitive used by both
+// SubscribeToUpdates and SubscribeToFile. It is also the documented
+// integration point for unit tests that want to drive the change-detection
+// loop without standing up a session mapper / SSH client / filesystem.
+//
+// fetcher is invoked once per tick of interval (or cs.pollInterval if
+// interval <= 0). Whenever the returned slice grows or its last element's
+// Timestamp advances, agentID is sent (non-blocking) on the returned channel.
+func (cs *ConversationService) subscribeWithFetcher(
+	agentID string,
+	fetcher func() ([]*claude.Message, error),
+	interval time.Duration,
+) (<-chan string, error) {
+	if agentID == "" {
+		return nil, fmt.Errorf("agentID is required")
+	}
+	if fetcher == nil {
+		return nil, fmt.Errorf("fetcher is required")
+	}
+
+	cs.subMu.Lock()
+	if _, exists := cs.subscriptions[agentID]; exists {
+		cs.subMu.Unlock()
+		return nil, fmt.Errorf("agent %q is already subscribed", agentID)
+	}
+	if interval <= 0 {
+		interval = cs.pollInterval
+	}
+	sub := &subscription{
+		ch:     make(chan string, 10),
+		stopCh: make(chan struct{}),
+		done:   make(chan struct{}),
+	}
+	cs.subscriptions[agentID] = sub
+	cs.subMu.Unlock()
+
+	go cs.runFetcherLoop(agentID, fetcher, interval, sub)
+	return sub.ch, nil
+}
+
+// SubscribeToFile watches a JSONL conversation file directly and emits the
+// file path on the returned channel whenever new messages appear. This is a
+// thinner alternative to SubscribeToUpdates for callers (and tests) that
+// already know the file path and don't need session-mapper resolution.
+//
+// The returned cancel function stops the polling goroutine and closes the
+// channel. Cancel is idempotent.
+func (cs *ConversationService) SubscribeToFile(
+	path string,
+	interval time.Duration,
+) (<-chan string, func(), error) {
+	if path == "" {
+		return nil, nil, fmt.Errorf("path is required")
+	}
+	// Use the path itself as the subscription key so multiple watchers of
+	// different files can coexist.
+	key := "file:" + path
+	fetcher := func() ([]*claude.Message, error) {
+		return cs.conversationReader.ReadConversation(path)
+	}
+	ch, err := cs.subscribeWithFetcher(key, fetcher, interval)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Re-map the channel so consumers receive the file path rather than the
+	// internal "file:<path>" key.
+	out := make(chan string, 10)
+	done := make(chan struct{})
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case _, ok := <-ch:
+				if !ok {
+					return
+				}
+				select {
+				case out <- path:
+				default:
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+	cancel := func() {
+		cs.Unsubscribe(key)
+		// Signal the relay goroutine to exit even if Unsubscribe was already
+		// called (closed ch will also terminate it).
+		select {
+		case <-done:
+		default:
+			close(done)
+		}
+	}
+	return out, cancel, nil
 }
 
 // Unsubscribe stops the polling goroutine for agentID and closes its channel.
@@ -205,14 +306,12 @@ func (cs *ConversationService) stopSubscription(sub *subscription) {
 	close(sub.ch)
 }
 
-// pollLoop is the per-subscription goroutine. It polls the agent's
-// conversation history at the configured interval and emits agentID whenever
-// the message count or last-message timestamp advances.
-func (cs *ConversationService) pollLoop(
+// runFetcherLoop is the per-subscription goroutine. It invokes fetcher at the
+// given interval and emits agentID whenever the message slice grows or the
+// last-message timestamp advances.
+func (cs *ConversationService) runFetcherLoop(
 	agentID string,
-	session *AgentSession,
-	server *Server,
-	pane *tmux.Pane,
+	fetcher func() ([]*claude.Message, error),
 	interval time.Duration,
 	sub *subscription,
 ) {
@@ -221,9 +320,9 @@ func (cs *ConversationService) pollLoop(
 	var lastCount int
 	var lastTimestamp time.Time
 
-	// Prime the baseline so the first tick after creation only reports
-	// *changes* and does not spuriously fire on initial state.
-	if msgs, err := cs.GetConversationHistory(session, server, pane); err == nil {
+	// Prime the baseline so the first tick only reports *changes* and does
+	// not spuriously fire on initial state.
+	if msgs, err := fetcher(); err == nil {
 		lastCount = len(msgs)
 		if len(msgs) > 0 {
 			lastTimestamp = msgs[len(msgs)-1].Timestamp
@@ -238,10 +337,10 @@ func (cs *ConversationService) pollLoop(
 		case <-sub.stopCh:
 			return
 		case <-ticker.C:
-			msgs, err := cs.GetConversationHistory(session, server, pane)
+			msgs, err := fetcher()
 			if err != nil {
 				// Transient read errors (file not yet created, SSH blip)
-				// shouldn't kill the watcher — just try again next tick.
+				// shouldn't kill the watcher — try again next tick.
 				continue
 			}
 			var newTimestamp time.Time
