@@ -319,9 +319,10 @@ func TestFindRepoRoot(t *testing.T) {
 
 	os.MkdirAll(gitDir, 0755)
 	os.MkdirAll(subDir, 0755)
-	// Make .git a valid repo by adding a HEAD file
+	// findRepoRoot requires `.git/HEAD` to validate the directory is a real
+	// git repository (not just any directory named `.git`).
 	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0644); err != nil {
-		t.Fatalf("failed to write HEAD: %v", err)
+		t.Fatalf("write .git/HEAD: %v", err)
 	}
 
 	testFile := filepath.Join(subDir, "main.go")
@@ -345,13 +346,11 @@ func TestFindRepoRoot(t *testing.T) {
 // (a stale empty directory) would cause findRepoRoot to incorrectly return /tmp.
 func TestFindRepoRoot_StaleGitDir(t *testing.T) {
 	tmpDir := t.TempDir()
-	// Create an empty .git directory with no HEAD file (stale/invalid)
 	staleGit := filepath.Join(tmpDir, ".git")
 	if err := os.MkdirAll(staleGit, 0755); err != nil {
 		t.Fatalf("failed to create stale .git dir: %v", err)
 	}
 
-	// Create a file under tmpDir
 	subDir := filepath.Join(tmpDir, "sub")
 	if err := os.MkdirAll(subDir, 0755); err != nil {
 		t.Fatalf("failed to create subdir: %v", err)
@@ -373,7 +372,6 @@ func TestFindRepoRoot_GitWorktree(t *testing.T) {
 		t.Fatalf("failed to create worktree dir: %v", err)
 	}
 
-	// .git is a file in worktrees, containing "gitdir: <path>"
 	gitFile := filepath.Join(worktreeDir, ".git")
 	if err := os.WriteFile(gitFile, []byte("gitdir: /some/path/to/real/.git\n"), 0644); err != nil {
 		t.Fatalf("failed to write .git file: %v", err)
@@ -400,7 +398,6 @@ func TestFindRepoRoot_RegularRepoWithHEAD(t *testing.T) {
 	if err := os.MkdirAll(gitDir, 0755); err != nil {
 		t.Fatalf("failed to create .git dir: %v", err)
 	}
-	// Create a HEAD file inside .git to make it a valid repo
 	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0644); err != nil {
 		t.Fatalf("failed to write HEAD: %v", err)
 	}
@@ -425,8 +422,13 @@ func TestArtifactProfile_GetFilesByRepo(t *testing.T) {
 
 	os.MkdirAll(filepath.Join(repo1, ".git"), 0755)
 	os.MkdirAll(filepath.Join(repo2, ".git"), 0755)
-	os.WriteFile(filepath.Join(repo1, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0644)
-	os.WriteFile(filepath.Join(repo2, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0644)
+	// Mark both as valid git repos so findRepoRoot recognizes them.
+	if err := os.WriteFile(filepath.Join(repo1, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0644); err != nil {
+		t.Fatalf("write repo1 .git/HEAD: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo2, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0644); err != nil {
+		t.Fatalf("write repo2 .git/HEAD: %v", err)
+	}
 
 	profile := &ArtifactProfile{
 		AgentID: "agent-1",
@@ -457,7 +459,9 @@ func TestArtifactProfile_GetEditedFilesByRepo(t *testing.T) {
 	repo1 := filepath.Join(tmpDir, "repo1")
 
 	os.MkdirAll(filepath.Join(repo1, ".git"), 0755)
-	os.WriteFile(filepath.Join(repo1, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0644)
+	if err := os.WriteFile(filepath.Join(repo1, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0644); err != nil {
+		t.Fatalf("write .git/HEAD: %v", err)
+	}
 
 	profile := &ArtifactProfile{
 		AgentID: "agent-1",
@@ -484,7 +488,9 @@ func TestArtifactProfile_GetRelativePaths(t *testing.T) {
 	gitDir := filepath.Join(repoDir, ".git")
 
 	os.MkdirAll(gitDir, 0755)
-	os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0644)
+	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0644); err != nil {
+		t.Fatalf("write .git/HEAD: %v", err)
+	}
 
 	profile := &ArtifactProfile{
 		AgentID: "agent-1",

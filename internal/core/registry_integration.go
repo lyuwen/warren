@@ -1,5 +1,7 @@
 package core
 
+import "log"
+
 // RegisterAgentSession registers an agent session in the AgentSessionRegistry
 func (w *Warren) RegisterAgentSession(session *AgentSession) error {
 	w.mu.Lock()
@@ -13,11 +15,12 @@ func (w *Warren) RegisterAgentSession(session *AgentSession) error {
 		return err
 	}
 
-	// Auto-save registry after registration
+	// Auto-save registry after registration. Save failures are logged but do
+	// not fail the registration itself — the in-memory registry is still
+	// valid, and the persistence layer can be retried later.
 	if w.registryPath != "" {
 		if err := w.sessionRegistry.Save(w.registryPath); err != nil {
-			// Log warning but don't fail
-			// TODO: Add proper logging
+			log.Printf("warren: failed to auto-save session registry to %s: %v", w.registryPath, err)
 		}
 	}
 
