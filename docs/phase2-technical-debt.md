@@ -12,6 +12,36 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 
 ## High Priority
 
+### 0a. SSH Host Key Verification Fails Open (P0/SEC — Phase 3 entry criterion)
+
+**Issue:** `defaultHostKeyCallback` in `internal/core/server.go` silently falls back to `ssh.InsecureIgnoreHostKey()` when `~/.ssh/known_hosts` is missing or unreadable. This is MITM-prone — any user-facing surface that invokes `ConnectionPool.Get` against an unknown host will accept any server key without warning.
+
+**Impact:** SECURITY. The moment Warren exposes remote-server connections to user input (Phase 3 multi-server fanout), this becomes a CVE-class fail-open default.
+
+**Effort:** Small (1-2 hours)
+
+**Recommendation:** Gate the insecure fallback behind explicit `WARREN_SSH_INSECURE_HOSTKEY=1` env opt-in. Default behavior: return an error if known_hosts is missing/unreadable. This MUST land before Phase 3 ships any remote-host UX.
+
+**Workaround:** Ensure `~/.ssh/known_hosts` is populated for all target hosts before invoking `ConnectionPool.Get`.
+
+**Tracking:** Flagged by Phase 2 Critique (docs/reviews/phase2-fixes-critique.md). P0 entry criterion for Phase 3.
+
+---
+
+### 0b. ConnectionPool.Get Serializes the Entire Pool (P1/CONC — before multi-server)
+
+**Issue:** `ConnectionPool.Get` holds `p.mu` across the full SSH `Dial` + handshake (`internal/core/server.go`). Under any slow target, every other Get call to any host blocks behind it. Single-supervisor / single-target usage hides this defect.
+
+**Impact:** Concurrency. The moment Phase 3 fans out to multiple SSH targets in parallel, slow hosts will serialize all reconnection attempts and effectively starve the pool.
+
+**Effort:** Small-medium (half day)
+
+**Recommendation:** Switch to a double-checked locking pattern or per-key mutex so dial+handshake happen outside `p.mu`. Add a regression test that two slow Get() calls to different hosts overlap.
+
+**Tracking:** Flagged by Phase 2 Reviewer and Critique. P1 before Phase 3 multi-server use.
+
+---
+
 ### 1. Multi-Server Discovery Not Tested at Scale
 
 **Issue:** Agent discovery has only been tested with localhost. Multi-server scenarios (5+ remote servers, 20+ agents) have not been validated.
@@ -176,6 +206,55 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 **Workaround:** Extensive testing and documentation.
 
 **Code Location:** `internal/state/detector.go`
+
+---
+
+### P3. SubscribeToFile Has No Production Callers
+
+**Issue:** `ConversationService.SubscribeToFile(path, interval)` is exported but only used by tests. Real consumers go through `SubscribeToUpdates`. This is a backwards test seam — tests should use the internal `subscribeWithFetcher` hook instead.
+
+**Impact:** Public API surface area unjustified by use.
+
+**Effort:** Small (1 hour)
+
+**Recommendation:** Unexport `SubscribeToFile` (rename to `subscribeToFile`) or delete it. Update tests to use `subscribeWithFetcher`.
+
+**Tracking:** Flagged by Phase 2 Critique. P3 cleanup.
+
+---
+
+### P3. SubscribeToUpdates / SSH Minor Hygiene Items
+
+**Issue:** Bundle of MINOR items from Phase 2 review:
+- `findRepoRoot` worktree branch doesn't verify the `.git` file starts with `gitdir:` prefix
+- SSH agent socket leak on failed handshake
+- Encrypted private-key files silently skipped (no log)
+- `defaultClientConfig` uses raw int port instead of `strconv.Itoa`
+- `TestRegisterAgentSession_EmptyPathNoSave` doesn't restore log writer
+- `SubscribeToFile` relay has a redundant `done` channel
+- `SubscribeToUpdates` doesn't validate non-nil session (will NPE in goroutine)
+- Prime-vs-first-tick edge in poller can spuriously fire if data changes between them
+- Stale design comment in tests
+
+**Impact:** Low — none affect correctness under normal use.
+
+**Effort:** Small (half day total)
+
+**Recommendation:** Batch into a single cleanup PR alongside the P0/P1 SSH items.
+
+**Tracking:** Phase 2 Reviewer findings (docs/reviews/phase2-fixes-review.md).
+
+---
+
+### Phase 3 Design Question: ConnectionPool Key
+
+**Issue:** `ConnectionPool` keys connections by `server.Name`. Two configs with same name + different host would alias; same host + different names would duplicate.
+
+**Impact:** Design ambiguity, not a current bug.
+
+**Recommendation:** Make a design call before Phase 3 SSH UX — either document Name as authoritative, or switch key to `host:port`.
+
+**Tracking:** Flagged by Phase 2 Critique.
 
 ---
 
