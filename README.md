@@ -18,6 +18,13 @@ Warren is a central hub for supervising and interacting with distributed coding-
 - ✅ **Web Interface** - Real-time web dashboard with WebSocket updates and conversation display
 - ✅ **Topology View** - Hierarchical visualization of tmux infrastructure with agent state enrichment and filtering (TUI: press 't', Web: GET /api/topology)
 
+### Phase 2 Follow-up Fixes
+
+- ✅ **SSH ConnectionPool** - Now connects to remote servers using SSH agent and key-based auth, with `known_hosts` host-key verification required
+- ✅ **Conversation Update Subscriptions** - `ConversationService.SubscribeToUpdates` is implemented via polling (default 3s interval); call `Unsubscribe(agentID)` to stop a watcher or `Close()` to stop all
+- ✅ **Registry save failures** are now logged instead of silently swallowed
+- ✅ **`findRepoRoot`** now validates `.git` is a real repository (file or directory containing `HEAD`), avoiding false matches on stale `.git` entries
+
 ## Quick Start
 
 ### Build
@@ -132,7 +139,7 @@ Phase 1 validates the tmux interface model. The following components are impleme
 - **Server Model** (`internal/core/`)
   - Server entity with local/remote support
   - Server registry with YAML persistence
-  - Connection pool for SSH connections (placeholder)
+  - Connection pool for SSH connections (agent + key-based auth, `known_hosts` verification)
 
 ### Tmux Interface (`internal/tmux/`)
 
@@ -283,6 +290,8 @@ See `ROADMAP.md` for detailed planning.
 **Phase 2 Limitations:**
 
 - **Multi-Server Discovery**: Multi-server agent discovery has not been tested at scale. Current validation covers localhost only. (Planned for Phase 3)
+
+- **SSH Host Keys**: Remote SSH connections require the target host to be present in your `known_hosts` file. Unknown hosts are rejected — add them via `ssh-keyscan` or a one-time interactive `ssh` connection before pointing Warren at them.
 
 - **E2E Test Coverage**: The following components have not been validated in end-to-end testing:
   - TUI interface (manual testing required)
