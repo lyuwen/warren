@@ -24,5 +24,16 @@
         ]
       }
     ]
+  },
+  "extraKnownMarketplaces": {
+    "dev-teams-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "lyuwen/dev-teams"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "dev-teams@dev-teams-marketplace": true
   }
 }

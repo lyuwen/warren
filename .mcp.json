@@ -6,7 +6,7 @@
       "args": [
         "mcp-server-sqlite",
         "--db-path",
-        "/home/lfu/git-projects/warren/warren.db"
+        "/home/lfu/.warren/warren.db"
       ],
       "env": {}
     },
