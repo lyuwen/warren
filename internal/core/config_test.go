@@ -15,11 +15,11 @@ func TestDefaultConfig(t *testing.T) {
 	if config.MinConfidence != 0.7 {
 		t.Errorf("expected MinConfidence 0.7, got %v", config.MinConfidence)
 	}
-	if config.DBPath != "warren.db" {
-		t.Errorf("expected DBPath 'warren.db', got %v", config.DBPath)
+	if config.DBPath != DefaultDBPath() {
+		t.Errorf("expected DBPath %q (DefaultDBPath()), got %v", DefaultDBPath(), config.DBPath)
 	}
-	if config.ConfigDir != ".warren" {
-		t.Errorf("expected ConfigDir '.warren', got %v", config.ConfigDir)
+	if config.ConfigDir != DefaultConfigDir() {
+		t.Errorf("expected ConfigDir %q (DefaultConfigDir()), got %v", DefaultConfigDir(), config.ConfigDir)
 	}
 	if config.EventRetentionPeriod != 30*24*time.Hour {
 		t.Errorf("expected EventRetentionPeriod 30 days, got %v", config.EventRetentionPeriod)

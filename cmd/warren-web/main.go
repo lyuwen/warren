@@ -15,19 +15,43 @@ import (
 )
 
 func main() {
-	// Parse command-line flags
+	// Parse command-line flags. -db defaults to core.DefaultDBPath() so the
+	// --help text shows the resolved canonical path under $HOME/.warren.
 	addr := flag.String("addr", ":8080", "HTTP server address")
-	dbPath := flag.String("db", "warren.db", "Database path")
+	dbPath := flag.String("db", core.DefaultDBPath(), "Database path")
 	pollInterval := flag.Duration("poll", 500*time.Millisecond, "Polling interval")
 	minConfidence := flag.Float64("confidence", 0.7, "Minimum confidence for state transitions")
 	flag.Parse()
 
-	// Create Warren orchestrator
+	// Detect whether the user explicitly passed -db via flag.Visit. We do
+	// NOT compare *dbPath to core.DefaultDBPath() — a user who legitimately
+	// passes the same string explicitly must not trigger the legacy-DB
+	// warning, and a user who simply launched without -db must trigger it.
+	userOverrodeDB := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "db" {
+			userOverrodeDB = true
+		}
+	})
+
+	// Refuse to start if a legacy cwd-relative warren.db would be silently
+	// orphaned by the new $HOME/.warren default. Print the migration hint
+	// to stderr and exit non-zero — better than silent data loss.
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Failed to resolve current working directory: %v", err)
+	}
+	if err := core.CheckLegacyDB(userOverrodeDB, cwd, core.DefaultDBPath()); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
+
+	// Create Warren orchestrator. ConfigDir resolves under $HOME/.warren via
+	// core.DefaultConfigDir(); core.NewWarren ensures the directory exists.
 	warrenConfig := core.DefaultConfig()
 	warrenConfig.PollInterval = *pollInterval
 	warrenConfig.MinConfidence = *minConfidence
 	warrenConfig.DBPath = *dbPath
-	warrenConfig.ConfigDir = os.ExpandEnv("$HOME/.warren")
 
 	warren, err := core.NewWarren(warrenConfig)
 	if err != nil {
