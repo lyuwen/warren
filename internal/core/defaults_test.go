@@ -150,13 +150,13 @@ func TestEnsureConfigDir_PermissionDenied(t *testing.T) {
 	}
 }
 
-// -------- LegacyDBCheck --------
+// -------- CheckLegacyDB --------
 
-// TestLegacyDBCheck_TriggersWhenLegacyExistsAndNoOverride is the
+// TestCheckLegacyDB_TriggersWhenLegacyExistsAndNoOverride is the
 // refuse-to-start case demanded by the Critique. User did not pass -db,
 // ./warren.db exists, DefaultDBPath() does NOT exist → error with the
 // actionable "Found legacy database" wording.
-func TestLegacyDBCheck_TriggersWhenLegacyExistsAndNoOverride(t *testing.T) {
+func TestCheckLegacyDB_TriggersWhenLegacyExistsAndNoOverride(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
@@ -167,32 +167,22 @@ func TestLegacyDBCheck_TriggersWhenLegacyExistsAndNoOverride(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	err := core.LegacyDBCheck(false, "warren-web")
+	defaultPath := filepath.Join(tmpHome, ".warren", "warren.db")
+	err := core.CheckLegacyDB(false, cwd, defaultPath)
 	if err == nil {
-		t.Fatalf("LegacyDBCheck(false, ...) returned nil; expected refuse-to-start error")
+		t.Fatalf("CheckLegacyDB(false, ...) returned nil; expected refuse-to-start error")
 	}
-	msg := err.Error()
-	if !strings.Contains(msg, "Found legacy database") {
-		t.Errorf("error message must contain \"Found legacy database\"; got %q", msg)
+	if !strings.Contains(err.Error(), "Found legacy database") {
+		t.Errorf("error message must contain \"Found legacy database\"; got %q", err.Error())
 	}
-	// Should mention the new $HOME/.warren/ location.
-	if !strings.Contains(msg, ".warren") {
-		t.Errorf("error message should reference the new $HOME/.warren/ location; got %q", msg)
-	}
-	// Should mention the binary hint so the user's escape-hatch invocation is correct.
-	if !strings.Contains(msg, "warren-web") {
-		t.Errorf("error message should reference the binary hint %q; got %q", "warren-web", msg)
-	}
-	// Should suggest `-db ./warren.db` as the escape hatch.
-	if !strings.Contains(msg, "./warren.db") {
-		t.Errorf("error message should suggest -db ./warren.db escape hatch; got %q", msg)
+	if !strings.Contains(err.Error(), ".warren") {
+		t.Errorf("error message should reference the new $HOME/.warren/ location; got %q", err.Error())
 	}
 }
 
-// TestLegacyDBCheck_NoTriggerWhenUserOverrode confirms flag.Visit-derived
-// detection: when the caller explicitly set -db, never warn — the user is
-// in control regardless of cwd contents.
-func TestLegacyDBCheck_NoTriggerWhenUserOverrode(t *testing.T) {
+// TestCheckLegacyDB_NoTriggerWhenUserOverrode confirms flag.Visit-derived
+// detection: when the caller explicitly set -db, never warn.
+func TestCheckLegacyDB_NoTriggerWhenUserOverrode(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
@@ -203,16 +193,16 @@ func TestLegacyDBCheck_NoTriggerWhenUserOverrode(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	err := core.LegacyDBCheck(true, "warren-web")
-	if err != nil {
-		t.Errorf("LegacyDBCheck(true, ...) returned %v; expected nil when user overrode -db", err)
+	defaultPath := filepath.Join(tmpHome, ".warren", "warren.db")
+	if err := core.CheckLegacyDB(true, cwd, defaultPath); err != nil {
+		t.Errorf("CheckLegacyDB(true, ...) returned %v; expected nil when user overrode -db", err)
 	}
 }
 
-// TestLegacyDBCheck_NoTriggerWhenNewPathExists covers "user already
+// TestCheckLegacyDB_NoTriggerWhenNewPathExists covers "user already
 // migrated": both ./warren.db AND <HOME>/.warren/warren.db exist. New path
 // wins, no warning.
-func TestLegacyDBCheck_NoTriggerWhenNewPathExists(t *testing.T) {
+func TestCheckLegacyDB_NoTriggerWhenNewPathExists(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
@@ -226,48 +216,35 @@ func TestLegacyDBCheck_NoTriggerWhenNewPathExists(t *testing.T) {
 	if err := os.MkdirAll(newDir, 0755); err != nil {
 		t.Fatalf("setup new dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(newDir, "warren.db"), []byte("new"), 0644); err != nil {
+	defaultPath := filepath.Join(newDir, "warren.db")
+	if err := os.WriteFile(defaultPath, []byte("new"), 0644); err != nil {
 		t.Fatalf("setup new db: %v", err)
 	}
 
-	if err := core.LegacyDBCheck(false, "warren-web"); err != nil {
-		t.Errorf("LegacyDBCheck returned %v; expected nil when DefaultDBPath already exists", err)
+	if err := core.CheckLegacyDB(false, cwd, defaultPath); err != nil {
+		t.Errorf("CheckLegacyDB returned %v; expected nil when DefaultDBPath already exists", err)
 	}
 }
 
-// TestLegacyDBCheck_NoTriggerWhenNoLegacyFile covers the first-run path.
-func TestLegacyDBCheck_NoTriggerWhenNoLegacyFile(t *testing.T) {
+// TestCheckLegacyDB_NoTriggerWhenNoLegacyFile covers the first-run path.
+func TestCheckLegacyDB_NoTriggerWhenNoLegacyFile(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
 	cwd := t.TempDir()
 	chdirForTest(t, cwd)
 
-	if err := core.LegacyDBCheck(false, "warren-web"); err != nil {
-		t.Errorf("LegacyDBCheck returned %v; expected nil on first run", err)
+	defaultPath := filepath.Join(tmpHome, ".warren", "warren.db")
+	if err := core.CheckLegacyDB(false, cwd, defaultPath); err != nil {
+		t.Errorf("CheckLegacyDB returned %v; expected nil on first run", err)
 	}
 }
 
-// TestLegacyDBCheck_DefaultBinaryHint exercises the empty-binaryHint
-// fallback documented in defaults.go: a caller that passes "" gets
-// "warren" used in the suggestion text.
-func TestLegacyDBCheck_DefaultBinaryHint(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
-
-	cwd := t.TempDir()
-	chdirForTest(t, cwd)
-
-	if err := os.WriteFile(filepath.Join(cwd, "warren.db"), []byte("legacy"), 0644); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	err := core.LegacyDBCheck(false, "")
-	if err == nil {
-		t.Fatalf("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "warren -db") && !strings.Contains(err.Error(), "warren ") {
-		t.Errorf("error message should fall back to %q binary hint; got %q", "warren", err.Error())
+// TestCheckLegacyDB_EmptyArgs_Noops documents the guard branch in defaults.go:
+// empty cwd/defaultPath returns nil rather than panicking.
+func TestCheckLegacyDB_EmptyArgs_Noops(t *testing.T) {
+	if err := core.CheckLegacyDB(false, "", ""); err != nil {
+		t.Errorf("CheckLegacyDB with empty args returned %v; expected nil", err)
 	}
 }
 

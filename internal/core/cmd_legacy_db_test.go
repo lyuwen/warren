@@ -149,8 +149,8 @@ func TestCmd_WarrenWeb_LegacyDBRefusesToStart(t *testing.T) {
 	if !strings.Contains(stderr, "Found legacy database") {
 		t.Errorf("stderr missing %q substring:\n%s", "Found legacy database", stderr)
 	}
-	if !strings.Contains(stderr, "warren-web") {
-		t.Errorf("stderr should mention the binary name %q:\n%s", "warren-web", stderr)
+	if !strings.Contains(stderr, "warren -db ./warren.db") {
+		t.Errorf("stderr should mention the shipped escape-hatch invocation %q:\n%s", "warren -db ./warren.db", stderr)
 	}
 	if !strings.Contains(stderr, ".warren") {
 		t.Errorf("stderr should reference the new $HOME/.warren/ location:\n%s", stderr)
@@ -227,7 +227,7 @@ func TestCmd_WarrenTUI_LegacyDBRefusesToStart(t *testing.T) {
 	if !strings.Contains(stderr, "Found legacy database") {
 		t.Errorf("stderr missing %q substring:\n%s", "Found legacy database", stderr)
 	}
-	if !strings.Contains(stderr, "warren-tui") {
-		t.Errorf("stderr should mention the binary name %q:\n%s", "warren-tui", stderr)
+	if !strings.Contains(stderr, "warren -db ./warren.db") {
+		t.Errorf("stderr should mention the shipped escape-hatch invocation %q:\n%s", "warren -db ./warren.db", stderr)
 	}
 }
