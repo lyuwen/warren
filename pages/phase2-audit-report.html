@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Warren Phase 2 Deep Audit Report</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface2: #1c2129;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-muted: #8b949e;
+    --heading: #e6edf3;
+    --green: #3fb950;
+    --green-bg: rgba(63, 185, 80, 0.1);
+    --yellow: #d29922;
+    --yellow-bg: rgba(210, 153, 34, 0.1);
+    --red: #f85149;
+    --red-bg: rgba(248, 81, 73, 0.1);
+    --blue: #58a6ff;
+    --blue-bg: rgba(88, 166, 255, 0.1);
+    --purple: #bc8cff;
+    --orange: #f0883e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 24px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  h1 { color: var(--heading); font-size: 28px; margin-bottom: 8px; }
+  h2 { color: var(--heading); font-size: 22px; margin: 32px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h3 { color: var(--heading); font-size: 17px; margin: 20px 0 10px; }
+
+  .meta { color: var(--text-muted); font-size: 14px; margin-bottom: 24px; }
+  .meta span { margin-right: 20px; }
+
+  /* Summary cards */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin: 20px 0 32px;
+  }
+  .summary-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+  }
+  .summary-card .number {
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+  .summary-card .label {
+    font-size: 13px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 4px;
+  }
+  .green { color: var(--green); }
+  .yellow { color: var(--yellow); }
+  .red { color: var(--red); }
+  .blue { color: var(--blue); }
+  .purple { color: var(--purple); }
+  .orange { color: var(--orange); }
+
+  /* Overall verdict */
+  .verdict-box {
+    background: var(--surface);
+    border: 2px solid var(--yellow);
+    border-radius: 8px;
+    padding: 24px;
+    margin: 20px 0;
+  }
+  .verdict-box h3 {
+    color: var(--yellow);
+    font-size: 20px;
+    margin: 0 0 12px;
+  }
+  .verdict-box p { margin: 8px 0; }
+
+  /* Module audit table */
+  .audit-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  .audit-table th {
+    background: var(--surface2);
+    color: var(--heading);
+    text-align: left;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+  }
+  .audit-table td {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .audit-table tr:nth-child(even) { background: var(--surface); }
+  .audit-table tr:hover { background: var(--surface2); }
+
+  /* Status badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .badge-verified { background: var(--green-bg); color: var(--green); border: 1px solid var(--green); }
+  .badge-partial { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow); }
+  .badge-missing { background: var(--red-bg); color: var(--red); border: 1px solid var(--red); }
+  .badge-open { background: var(--red-bg); color: var(--red); border: 1px solid var(--red); }
+  .badge-bug { background: var(--red-bg); color: var(--red); border: 1px solid var(--red); }
+
+  /* Issue checklist */
+  .issue-list {
+    list-style: none;
+    margin: 12px 0;
+  }
+  .issue-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin: 8px 0;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    align-items: start;
+  }
+  .issue-item.p0 { border-left: 4px solid var(--red); }
+  .issue-item.p1 { border-left: 4px solid var(--orange); }
+  .issue-item.p2 { border-left: 4px solid var(--yellow); }
+  .issue-item.p3 { border-left: 4px solid var(--blue); }
+  .issue-item.p4 { border-left: 4px solid var(--text-muted); }
+  .issue-priority {
+    font-weight: 700;
+    font-size: 13px;
+    min-width: 28px;
+    text-align: center;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .issue-priority.p0 { background: var(--red-bg); color: var(--red); }
+  .issue-priority.p1 { background: rgba(240,136,62,0.15); color: var(--orange); }
+  .issue-priority.p2 { background: var(--yellow-bg); color: var(--yellow); }
+  .issue-priority.p3 { background: var(--blue-bg); color: var(--blue); }
+  .issue-priority.p4 { background: rgba(139,148,158,0.15); color: var(--text-muted); }
+  .issue-title { font-weight: 600; color: var(--heading); }
+  .issue-desc { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
+  .issue-tag {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    white-space: nowrap;
+  }
+  .tag-security { background: var(--red-bg); color: var(--red); }
+  .tag-correctness { background: rgba(240,136,62,0.15); color: var(--orange); }
+  .tag-claim { background: var(--yellow-bg); color: var(--yellow); }
+  .tag-docs { background: var(--blue-bg); color: var(--blue); }
+  .tag-test { background: rgba(188,140,255,0.15); color: var(--purple); }
+  .tag-design { background: rgba(139,148,158,0.15); color: var(--text-muted); }
+
+  /* Module detail sections */
+  .module-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin: 16px 0;
+  }
+  .module-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+  }
+  .module-header h3 { margin: 0; }
+  .module-body { margin-top: 16px; }
+  .module-stats {
+    display: flex;
+    gap: 16px;
+    margin: 12px 0;
+    flex-wrap: wrap;
+  }
+  .module-stat {
+    background: var(--surface2);
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .module-stat strong { color: var(--heading); }
+
+  .concern-box {
+    background: var(--yellow-bg);
+    border: 1px solid rgba(210, 153, 34, 0.3);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 8px 0;
+    font-size: 13px;
+  }
+  .concern-box strong { color: var(--yellow); }
+
+  .bug-box {
+    background: var(--red-bg);
+    border: 1px solid rgba(248, 81, 73, 0.3);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 8px 0;
+    font-size: 13px;
+  }
+  .bug-box strong { color: var(--red); }
+
+  .good-box {
+    background: var(--green-bg);
+    border: 1px solid rgba(63, 185, 80, 0.3);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 8px 0;
+    font-size: 13px;
+  }
+  .good-box strong { color: var(--green); }
+
+  /* Collapsible */
+  .collapsible .module-body { display: none; }
+  .collapsible.open .module-body { display: block; }
+  .toggle-icon { font-size: 14px; color: var(--text-muted); transition: transform 0.2s; }
+  .collapsible.open .toggle-icon { transform: rotate(90deg); }
+
+  /* Footer */
+  .footer {
+    margin-top: 48px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 13px;
+    text-align: center;
+  }
+
+  @media (max-width: 768px) {
+    body { padding: 12px; }
+    .summary-grid { grid-template-columns: repeat(2, 1fr); }
+    .issue-item { grid-template-columns: auto 1fr; }
+    .issue-tag { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Warren Phase 2 &mdash; Deep Audit Report</h1>
+<div class="meta">
+  <span>Date: 2026-05-26</span>
+  <span>Branch: dev/phase2-fixes</span>
+  <span>Audited by: 9 parallel agents</span>
+  <span>Scope: All Phase 2 ROADMAP tasks (2.1&ndash;2.9) + follow-up fixes</span>
+</div>
+
+<!-- ============================================================ -->
+<h2>1. Overall Evaluation</h2>
+
+<div class="summary-grid">
+  <div class="summary-card">
+    <div class="number green">248</div>
+    <div class="label">Tests Passing</div>
+  </div>
+  <div class="summary-card">
+    <div class="number red">0</div>
+    <div class="label">Tests Failing</div>
+  </div>
+  <div class="summary-card">
+    <div class="number blue">69</div>
+    <div class="label">Go Files</div>
+  </div>
+  <div class="summary-card">
+    <div class="number purple">18,386</div>
+    <div class="label">Lines of Go</div>
+  </div>
+  <div class="summary-card">
+    <div class="number">112</div>
+    <div class="label">Commits</div>
+  </div>
+  <div class="summary-card">
+    <div class="number">10</div>
+    <div class="label">Packages Tested</div>
+  </div>
+</div>
+
+<div class="verdict-box">
+  <h3>Verdict: SUBSTANTIALLY COMPLETE &mdash; WITH CAVEATS</h3>
+  <p>Phase 2 delivers on its core promise: a user can see all agent sessions, their states, conversation history, and notifications from a central hub without SSHing into tmux. The architecture is sound, the event-driven design is well-implemented, and the test suite is meaningful (248 tests, 0 failures).</p>
+  <p>However, the audit uncovered <strong>1 correctness bug</strong>, <strong>2 open security/concurrency issues</strong> (P0+P1 from the critique, confirmed still unresolved), <strong>5 features claimed as complete but only partially implemented</strong>, and <strong>several documentation inaccuracies</strong> where reported metrics don't match reality. None of these individually block Phase 3 planning, but the P0 SSH issue and the parser bug should be fixed before building on this foundation.</p>
+</div>
+
+<!-- Sub-task verification matrix -->
+<h3>ROADMAP Sub-Task Verification Matrix</h3>
+<table class="audit-table">
+  <thead>
+    <tr>
+      <th>Task</th>
+      <th>Sub-task</th>
+      <th>Status</th>
+      <th>Tests</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td rowspan="5"><strong>2.1</strong> Agent Session Registry</td>
+      <td>AgentSession entity</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>36</td>
+      <td>All fields present plus extras</td>
+    </tr>
+    <tr>
+      <td>Agent session discovery</td>
+      <td><span class="badge badge-partial">Partial</span></td>
+      <td>9+9</td>
+      <td>Content-based heuristic is dead code; only process-name detection is live</td>
+    </tr>
+    <tr>
+      <td>Registry persistence</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>11</td>
+      <td>Atomic writes, file locking, merge, prune all working</td>
+    </tr>
+    <tr>
+      <td>Manual registration</td>
+      <td><span class="badge badge-partial">Partial</span></td>
+      <td>3</td>
+      <td>API exists but no user-facing CLI/web/TUI interface</td>
+    </tr>
+    <tr>
+      <td>Multi-server testing</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>9 integ</td>
+      <td>Docker-based SSH integration tests</td>
+    </tr>
+
+    <tr>
+      <td rowspan="4"><strong>2.2</strong> Event Store</td>
+      <td>SQLite schema + append</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>8</td>
+      <td>3 event types, truly immutable (zero UPDATEs)</td>
+    </tr>
+    <tr>
+      <td>Event query</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>4</td>
+      <td>By agent, time range, type. Until/Offset untested.</td>
+    </tr>
+    <tr>
+      <td>Retention policy</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>10</td>
+      <td>Background pruning, configurable, graceful shutdown</td>
+    </tr>
+    <tr>
+      <td>Tests</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>18</td>
+      <td>Comprehensive coverage</td>
+    </tr>
+
+    <tr>
+      <td rowspan="4"><strong>2.3</strong> Activity Parser</td>
+      <td>Normalization stage</td>
+      <td><span class="badge badge-partial">Partial</span></td>
+      <td>&mdash;</td>
+      <td>ANSI stripping in tmux layer; no dedicated parser normalize step</td>
+    </tr>
+    <tr>
+      <td>Extraction (chat, file, tool, prompt)</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>9</td>
+      <td>All 4 types implemented. <strong>Bug:</strong> chat regex produces duplicates</td>
+    </tr>
+    <tr>
+      <td>Confidence scores</td>
+      <td><span class="badge badge-partial">Partial</span></td>
+      <td>3</td>
+      <td>Aggregate-level only (0.8 or 0.95), no per-event scoring</td>
+    </tr>
+    <tr>
+      <td>Test with real captures</td>
+      <td><span class="badge badge-partial">Partial</span></td>
+      <td>12</td>
+      <td>All tests use legacy patterns; zero real Claude Code UI patterns tested</td>
+    </tr>
+
+    <tr>
+      <td rowspan="4"><strong>2.4</strong> State Detection</td>
+      <td>State inference + 8 states</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>22</td>
+      <td>9 states (8 claimed + stopped). All Phase A enhancements verified.</td>
+    </tr>
+    <tr>
+      <td>Priority + time-decay + 2x override</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>5</td>
+      <td>Exact parameter match to ROADMAP claims</td>
+    </tr>
+    <tr>
+      <td>Emit state transition events</td>
+      <td><span class="badge badge-partial">Partial</span></td>
+      <td>&mdash;</td>
+      <td>Only notification-triggering transitions stored (~5 of 9 states)</td>
+    </tr>
+    <tr>
+      <td>Real session capture tests</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>5+11</td>
+      <td>5 real tmux fixtures + 11 synthetic (misleadingly named)</td>
+    </tr>
+
+    <tr>
+      <td rowspan="2"><strong>2.5</strong> Artifact Profile</td>
+      <td>All sub-tasks</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>20</td>
+      <td>Complete with findRepoRoot fix. In-memory only (lost on restart).</td>
+    </tr>
+    <tr>
+      <td>Git repo detection</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>4</td>
+      <td>isGitRepoRoot validates HEAD, worktree, stale dirs</td>
+    </tr>
+
+    <tr>
+      <td rowspan="2"><strong>2.6</strong> Notification Engine</td>
+      <td>All sub-tasks</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>18</td>
+      <td>5 triggers, immutable consumption, real-time channel</td>
+    </tr>
+    <tr>
+      <td>Mark as consumed</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>3</td>
+      <td>Single + bulk + not-found paths tested</td>
+    </tr>
+
+    <tr>
+      <td rowspan="5"><strong>2.7</strong> TUI (Read-Only)</td>
+      <td>Bubble Tea framework</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>&mdash;</td>
+      <td>bubbletea v1.3.10 + lipgloss v1.1.0</td>
+    </tr>
+    <tr>
+      <td>Server list view</td>
+      <td><span class="badge badge-partial">Partial</span></td>
+      <td>&mdash;</td>
+      <td>No dedicated server list; topology tree is closest</td>
+    </tr>
+    <tr>
+      <td>Session list grouped by server</td>
+      <td><span class="badge badge-partial">Partial</span></td>
+      <td>&mdash;</td>
+      <td>Color-coded by state: yes. Grouped by server: no.</td>
+    </tr>
+    <tr>
+      <td>Agent detail (state, chat, files)</td>
+      <td><span class="badge badge-partial">Partial</span></td>
+      <td>&mdash;</td>
+      <td>State + files + artifact: yes. Recent chat: no (separate view)</td>
+    </tr>
+    <tr>
+      <td>Tests</td>
+      <td><span class="badge badge-partial">Partial</span></td>
+      <td>13</td>
+      <td>Mostly smoke tests; no keyboard/transition tests</td>
+    </tr>
+
+    <tr>
+      <td rowspan="4"><strong>2.8</strong> Web Interface</td>
+      <td>REST API (claimed: 5)</td>
+      <td><span class="badge badge-partial">Partial</span></td>
+      <td>&mdash;</td>
+      <td>Actually 10 endpoints. Count claim wrong in ROADMAP + completion report.</td>
+    </tr>
+    <tr>
+      <td>WebSocket + all pages</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>&mdash;</td>
+      <td>Full Hub/Client, all 4 pages, responsive CSS</td>
+    </tr>
+    <tr>
+      <td>Localhost-only security (CORS)</td>
+      <td><span class="badge badge-partial">Partial</span></td>
+      <td>&mdash;</td>
+      <td>WebSocket: origin checked. REST: zero CORS. Binds 0.0.0.0 by default.</td>
+    </tr>
+    <tr>
+      <td>Tests (claimed: 8)</td>
+      <td><span class="badge badge-partial">Partial</span></td>
+      <td>4</td>
+      <td>Actually 4 tests (not 8). Topology routes only, no data flow.</td>
+    </tr>
+
+    <tr>
+      <td rowspan="4"><strong>2.9</strong> Conversation History</td>
+      <td>Session mapper + JSONL reader</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>8</td>
+      <td>PID&rarr;SessionID, 3 resolution strategies, JSONL parsing</td>
+    </tr>
+    <tr>
+      <td>Remote SSH reader</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>0</td>
+      <td>Implemented but no unit tests (SSH dependency)</td>
+    </tr>
+    <tr>
+      <td>Caching + SubscribeToUpdates</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>16</td>
+      <td>5s TTL cache + 3-layer polling. Zero production callers.</td>
+    </tr>
+    <tr>
+      <td>TUI + Web integration</td>
+      <td><span class="badge badge-verified">Verified</span></td>
+      <td>&mdash;</td>
+      <td>Both UIs load conversation via topology chain</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>2. Ambiguous or Unsubstantiated Claims</h2>
+
+<p>These are areas where the ROADMAP or completion report claims completion, but the audit found the implementation is missing, partial, or misrepresented.</p>
+
+<div class="module-section">
+  <h3>2a. Discovery heuristic claims content-based detection &mdash; only process-name detection is live</h3>
+  <p>ROADMAP says: <em>"detect Claude Code in pane title or content."</em> Reality: <code>detectClaudeCode()</code> and <code>detectCopilot()</code> methods exist with regex patterns but are <strong>never called</strong>. The live code path only checks <code>currentCommand</code> (process name). Additionally, <code>node</code> and <code>python</code> are treated as agent commands, which is overly broad.</p>
+</div>
+
+<div class="module-section">
+  <h3>2b. Session list claims "grouped by server" &mdash; flat list in reality</h3>
+  <p>ROADMAP says: <em>"agent session list view (grouped by server, color-coded by state)."</em> The color-coding is verified. The grouping is <strong>not implemented</strong> &mdash; <code>renderSessionList()</code> iterates a flat <code>[]string</code> of agent IDs with no server grouping. The <code>MonitoredSession.ServerName</code> field exists but is unused in the session list rendering.</p>
+</div>
+
+<div class="module-section">
+  <h3>2c. State transition events claim &mdash; only ~55% of transitions are persisted</h3>
+  <p>ROADMAP says: <em>"Emit state transition events."</em> Reality: <code>ProcessStateChange()</code> returns early for non-notification states. Transitions to <code>idle</code>, <code>thinking</code>, <code>executing</code>, and <code>unknown</code> produce no <code>StateChangeEvent</code> in the database. This undermines the "events over snapshots" design principle.</p>
+</div>
+
+<div class="module-section">
+  <h3>2d. Web API test count: 4 actual vs. 8 claimed</h3>
+  <p>The Phase 2 completion report states <em>"8 API tests passing."</em> The audit found exactly <strong>4 test functions</strong> in <code>api_test.go</code>, all covering topology endpoints only. Zero tests exist for <code>/api/agents</code>, <code>/api/notifications</code>, <code>/api/servers</code>, or <code>/api/conversation</code>.</p>
+</div>
+
+<div class="module-section">
+  <h3>2e. Activity parser tests use only legacy patterns &mdash; real Claude Code UI untested</h3>
+  <p>ROADMAP says: <em>"Test: parse known Claude Code session captures."</em> All 12 test cases use hand-crafted strings with legacy patterns (<code>User:</code>, <code>Reading file:</code>). The real Claude Code UI patterns (<code>&bull;</code>, <code>&rsaquo;</code>, <code>Esc to cancel</code>) that would fire in production have <strong>zero test coverage</strong>.</p>
+</div>
+
+<div class="module-section">
+  <h3>2f. SubscribeToUpdates infrastructure built but has zero production callers</h3>
+  <p>The 3-layer subscription system is well-implemented and tested (16 tests), but neither <code>SubscribeToUpdates</code> nor <code>SubscribeToFile</code> is called by any production code. Both TUI and web use one-shot reads. The real-time update capability is unused infrastructure.</p>
+</div>
+
+<div class="module-section">
+  <h3>2g. "Localhost-only security" &mdash; REST API has no CORS, server binds 0.0.0.0</h3>
+  <p>WebSocket upgrade checks localhost origin. REST API has <strong>zero CORS headers or middleware</strong>. The default listen address is <code>:8080</code> (all interfaces), not <code>127.0.0.1:8080</code>. A cross-origin page could read Warren API data if the server is running.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>3. Issue Checklist (sorted by priority &amp; severity)</h2>
+
+<ul class="issue-list">
+  <!-- P0 -->
+  <li class="issue-item p0">
+    <span class="issue-priority p0">P0</span>
+    <div>
+      <div class="issue-title">SSH host key verification fails open to InsecureIgnoreHostKey</div>
+      <div class="issue-desc"><code>server.go:207-224</code> silently falls back to accepting any host key when <code>~/.ssh/known_hosts</code> is missing. Must gate behind <code>WARREN_SSH_INSECURE_HOSTKEY=1</code> env var. Phase 3 entry criterion per critique.</div>
+    </div>
+    <span class="issue-tag tag-security">SECURITY</span>
+  </li>
+
+  <li class="issue-item p0">
+    <span class="issue-priority p0">P0</span>
+    <div>
+      <div class="issue-title">Activity parser duplicate event bug</div>
+      <div class="issue-desc">Chat regex <code>^\s*&bull;\s+[^(].+</code> matches tool/file/prompt lines too. Every <code>&bull; Read</code>, <code>&bull; Bash</code>, <code>&bull; Edit</code> line produces a spurious chat event in addition to the correct typed event. Inflates activity counts and may confuse state detection.</div>
+    </div>
+    <span class="issue-tag tag-correctness">BUG</span>
+  </li>
+
+  <!-- P1 -->
+  <li class="issue-item p1">
+    <span class="issue-priority p1">P1</span>
+    <div>
+      <div class="issue-title">ConnectionPool.Get holds mutex across SSH dial + handshake</div>
+      <div class="issue-desc"><code>server.go:88</code> &mdash; <code>defer p.mu.Unlock()</code> spans entire <code>Get()</code> including network dial and SSH handshake. A single slow host serializes all connection attempts. Fix: double-checked locking or per-key mutex. Phase 3 pre-req per critique.</div>
+    </div>
+    <span class="issue-tag tag-correctness">CONCURRENCY</span>
+  </li>
+
+  <li class="issue-item p1">
+    <span class="issue-priority p1">P1</span>
+    <div>
+      <div class="issue-title">REST API has no CORS protection</div>
+      <div class="issue-desc">Zero <code>Access-Control-*</code> headers anywhere in web API handlers. Only WebSocket checks origin. Combined with default <code>:8080</code> bind (all interfaces), any cross-origin page can read Warren data.</div>
+    </div>
+    <span class="issue-tag tag-security">SECURITY</span>
+  </li>
+
+  <!-- P2 -->
+  <li class="issue-item p2">
+    <span class="issue-priority p2">P2</span>
+    <div>
+      <div class="issue-title">State transition events only emitted for notification-triggering states</div>
+      <div class="issue-desc">Transitions to idle, thinking, executing, unknown are silently dropped. A full state history audit trail is impossible. Violates "events over snapshots" design principle.</div>
+    </div>
+    <span class="issue-tag tag-claim">DESIGN GAP</span>
+  </li>
+
+  <li class="issue-item p2">
+    <span class="issue-priority p2">P2</span>
+    <div>
+      <div class="issue-title">Agent session list not grouped by server in TUI</div>
+      <div class="issue-desc">ROADMAP claims grouping; <code>renderSessionList()</code> is a flat list. <code>ServerName</code> field exists on <code>MonitoredSession</code> but unused in rendering.</div>
+    </div>
+    <span class="issue-tag tag-claim">UNIMPLEMENTED CLAIM</span>
+  </li>
+
+  <li class="issue-item p2">
+    <span class="issue-priority p2">P2</span>
+    <div>
+      <div class="issue-title">Activity parser tests have zero coverage of real Claude Code UI patterns</div>
+      <div class="issue-desc">All 12 tests use legacy <code>User:</code>/<code>Reading file:</code> format. The production-path patterns (<code>&bull;</code>, <code>&rsaquo;</code>) are completely untested. The parser's correctness for real agent output is unverified.</div>
+    </div>
+    <span class="issue-tag tag-test">TEST GAP</span>
+  </li>
+
+  <li class="issue-item p2">
+    <span class="issue-priority p2">P2</span>
+    <div>
+      <div class="issue-title">Discovery content-based heuristic is dead code</div>
+      <div class="issue-desc"><code>detectClaudeCode()</code> and <code>detectCopilot()</code> in <code>discovery.go</code> exist but are never called. Process detection treats <code>node</code> and <code>python</code> as agent commands (overly broad).</div>
+    </div>
+    <span class="issue-tag tag-correctness">DEAD CODE</span>
+  </li>
+
+  <li class="issue-item p2">
+    <span class="issue-priority p2">P2</span>
+    <div>
+      <div class="issue-title">No user-facing manual agent registration</div>
+      <div class="issue-desc">ROADMAP claims manual registration. API exists but no CLI command, web endpoint, or TUI interaction allows a user to register an agent.</div>
+    </div>
+    <span class="issue-tag tag-claim">UNIMPLEMENTED CLAIM</span>
+  </li>
+
+  <!-- P3 -->
+  <li class="issue-item p3">
+    <span class="issue-priority p3">P3</span>
+    <div>
+      <div class="issue-title">Web API test count misreported (4 actual vs 8 claimed)</div>
+      <div class="issue-desc">Completion report says "8 API tests." Only 4 exist in <code>api_test.go</code>, all topology-only. Core agent/notification/server endpoints have zero automated tests.</div>
+    </div>
+    <span class="issue-tag tag-docs">DOCS INACCURACY</span>
+  </li>
+
+  <li class="issue-item p3">
+    <span class="issue-priority p3">P3</span>
+    <div>
+      <div class="issue-title">ROADMAP says question detection "last 3 lines" &mdash; code uses 15</div>
+      <div class="issue-desc"><code>detector.go</code> collects last 15 non-empty lines for question scanning. ROADMAP Phase A description says "must be in last 3 lines." Documentation should be corrected.</div>
+    </div>
+    <span class="issue-tag tag-docs">DOCS INACCURACY</span>
+  </li>
+
+  <li class="issue-item p3">
+    <span class="issue-priority p3">P3</span>
+    <div>
+      <div class="issue-title">CLAUDE.md file organization missing 4 internal packages</div>
+      <div class="issue-desc"><code>internal/claude</code>, <code>internal/notifications</code>, <code>internal/types</code>, <code>internal/testdata</code>, <code>test/integration</code>, and <code>examples/</code> are not documented. <code>pkg/</code> is listed but empty.</div>
+    </div>
+    <span class="issue-tag tag-docs">DOCS INACCURACY</span>
+  </li>
+
+  <li class="issue-item p3">
+    <span class="issue-priority p3">P3</span>
+    <div>
+      <div class="issue-title">Web API endpoint count wrong in ROADMAP (10 actual vs 5 claimed)</div>
+      <div class="issue-desc">Topology endpoints (3), notification mutation endpoints (2) undocumented. The "Read-Only" label is technically inaccurate due to POST <code>/api/notifications/consume</code> and <code>/clear</code>.</div>
+    </div>
+    <span class="issue-tag tag-docs">DOCS INACCURACY</span>
+  </li>
+
+  <li class="issue-item p3">
+    <span class="issue-priority p3">P3</span>
+    <div>
+      <div class="issue-title">TUI tests are mostly smoke tests (13 tests, no interaction coverage)</div>
+      <div class="issue-desc">Zero tests for keyboard navigation, view transitions, data refresh, notification interaction, or conversation loading. Only checks non-empty output and non-panic behavior.</div>
+    </div>
+    <span class="issue-tag tag-test">TEST GAP</span>
+  </li>
+
+  <li class="issue-item p3">
+    <span class="issue-priority p3">P3</span>
+    <div>
+      <div class="issue-title">SubscribeToFile has no production callers (unexport or delete)</div>
+      <div class="issue-desc">Exported public API with zero consumers. Tests should use <code>subscribeWithFetcher</code> instead. Critique flagged this as cleanup item.</div>
+    </div>
+    <span class="issue-tag tag-design">CLEANUP</span>
+  </li>
+
+  <li class="issue-item p3">
+    <span class="issue-priority p3">P3</span>
+    <div>
+      <div class="issue-title">SubscribeToUpdates has zero production callers</div>
+      <div class="issue-desc">16 passing tests but neither TUI nor web uses it. Both do one-shot reads. The polling infrastructure is built but unintegrated.</div>
+    </div>
+    <span class="issue-tag tag-design">UNUSED INFRA</span>
+  </li>
+
+  <!-- P4 -->
+  <li class="issue-item p4">
+    <span class="issue-priority p4">P4</span>
+    <div>
+      <div class="issue-title">In-memory artifact profiles lost on restart</div>
+      <div class="issue-desc"><code>ArtifactProfileManager</code> stores profiles in a Go map. No persistence. Raw events are in SQLite, but no rebuild-from-events logic exists.</div>
+    </div>
+    <span class="issue-tag tag-design">DESIGN</span>
+  </li>
+
+  <li class="issue-item p4">
+    <span class="issue-priority p4">P4</span>
+    <div>
+      <div class="issue-title">WebSocket re-broadcasts all unconsumed notifications every second</div>
+      <div class="issue-desc"><code>monitorStateChanges()</code> sends ALL unconsumed notifications to all clients every poll cycle, not just new ones. Noisy for long-lived connections.</div>
+    </div>
+    <span class="issue-tag tag-design">DESIGN</span>
+  </li>
+
+  <li class="issue-item p4">
+    <span class="issue-priority p4">P4</span>
+    <div>
+      <div class="issue-title">Parser/state detector pattern divergence</div>
+      <div class="issue-desc">State detector handles patterns the parser doesn't: <code>NotebookEdit</code>, <code>&cross;</code> timer, <code>&lowast;</code> recap, <code>&lsqb;</code> tool results, status bar, NBSP. The two modules have evolved independently.</div>
+    </div>
+    <span class="issue-tag tag-design">DESIGN</span>
+  </li>
+
+  <li class="issue-item p4">
+    <span class="issue-priority p4">P4</span>
+    <div>
+      <div class="issue-title">Dead code: TimestampRaw, cache.invalidate(), detectClaudeCode/detectCopilot</div>
+      <div class="issue-desc">Multiple dead code fragments across packages. Harmless but confusing for future developers.</div>
+    </div>
+    <span class="issue-tag tag-design">CLEANUP</span>
+  </li>
+
+  <li class="issue-item p4">
+    <span class="issue-priority p4">P4</span>
+    <div>
+      <div class="issue-title">No RemoteReader unit tests</div>
+      <div class="issue-desc"><code>remote_reader.go</code> has no tests due to SSH dependency. Acceptable for Phase 2 but increases risk for Phase 3 remote features.</div>
+    </div>
+    <span class="issue-tag tag-test">TEST GAP</span>
+  </li>
+
+  <li class="issue-item p4">
+    <span class="issue-priority p4">P4</span>
+    <div>
+      <div class="issue-title">Confidence scoring is a 2-bucket system (0.8 or 0.95)</div>
+      <div class="issue-desc">Aggregate-level only, no per-event confidence, no pattern-quality weighting. Coarse but functional.</div>
+    </div>
+    <span class="issue-tag tag-design">DESIGN</span>
+  </li>
+
+  <li class="issue-item p4">
+    <span class="issue-priority p4">P4</span>
+    <div>
+      <div class="issue-title">Misleading test names: "RealSessionCapture" tests use synthetic data</div>
+      <div class="issue-desc">11 tests named <code>TestStateDetector_RealSessionCapture_*</code> use inline synthetic strings, not real captures. Only the 5 <code>TestGroundTruth_*</code> tests use actual tmux fixtures.</div>
+    </div>
+    <span class="issue-tag tag-test">TEST QUALITY</span>
+  </li>
+
+  <li class="issue-item p4">
+    <span class="issue-priority p4">P4</span>
+    <div>
+      <div class="issue-title">SSH pool key ambiguity: server.Name vs host:port</div>
+      <div class="issue-desc"><code>ConnectionPool</code> keys by <code>server.Name</code>. Same name + different host = alias. Same host + different name = duplicate. Needs a design decision before Phase 3.</div>
+    </div>
+    <span class="issue-tag tag-design">DESIGN QUESTION</span>
+  </li>
+</ul>
+
+<!-- ============================================================ -->
+<h2>4. Additional Findings</h2>
+
+<div class="module-section collapsible open" onclick="this.classList.toggle('open')">
+  <div class="module-header">
+    <h3>Architectural Insight: Dual SSH Paths</h3>
+    <span class="toggle-icon">&#9654;</span>
+  </div>
+  <div class="module-body">
+    <p>The project has <strong>two separate SSH mechanisms</strong> that are not unified:</p>
+    <div class="module-stats">
+      <div class="module-stat"><strong>ConnectionPool</strong> (core/server.go) &mdash; Go-native <code>golang.org/x/crypto/ssh</code> with agent/key auth</div>
+      <div class="module-stat"><strong>RemoteExecutor</strong> (tmux/executor.go) &mdash; Shells out to <code>ssh</code> CLI with <code>ControlMaster=auto</code></div>
+    </div>
+    <p>The <code>ConnectionPool</code> is <strong>not used</strong> by <code>RemoteExecutor</code>. Actual tmux command execution goes through the system <code>ssh</code> binary. This means the P0/P1 issues in <code>ConnectionPool</code> have <strong>limited blast radius today</strong> but will become critical when Phase 3 uses <code>ConnectionPool</code> directly.</p>
+  </div>
+</div>
+
+<div class="module-section collapsible open" onclick="this.classList.toggle('open')">
+  <div class="module-header">
+    <h3>Test Quality Distribution</h3>
+    <span class="toggle-icon">&#9654;</span>
+  </div>
+  <div class="module-body">
+    <table class="audit-table">
+      <thead>
+        <tr><th>Package</th><th>Tests</th><th>Quality Assessment</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>internal/core</td><td>108</td><td class="green">Strong &mdash; covers config, registry, discovery, artifacts, conversation, topology</td></tr>
+        <tr><td>internal/state</td><td>42</td><td class="green">Strong &mdash; unit + ground truth fixtures + benchmarks + concurrency</td></tr>
+        <tr><td>internal/events</td><td>18</td><td class="green">Good &mdash; CRUD + pruning + config. Missing Until/Offset coverage.</td></tr>
+        <tr><td>internal/notifications</td><td>18</td><td class="green">Good &mdash; all triggers, consumption, channel, shouldNotify exhaustive</td></tr>
+        <tr><td>internal/tmux</td><td>18</td><td class="green">Good &mdash; unit + live tmux integration tests</td></tr>
+        <tr><td>internal/tui</td><td>13</td><td class="yellow">Weak &mdash; smoke tests only, no interaction/transition coverage</td></tr>
+        <tr><td>internal/parser</td><td>12</td><td class="yellow">Weak &mdash; all legacy patterns, zero real UI coverage, duplicate bug undetected</td></tr>
+        <tr><td>internal/claude</td><td>8</td><td>Adequate &mdash; mapper + reader tested, no RemoteReader tests</td></tr>
+        <tr><td>internal/web</td><td>4</td><td class="red">Poor &mdash; topology only, 6/10 endpoints untested, count misreported</td></tr>
+        <tr><td>test/integration</td><td>10</td><td class="green">Strong &mdash; real Docker/SSH/tmux, skip-gated for CI</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="module-section collapsible open" onclick="this.classList.toggle('open')">
+  <div class="module-header">
+    <h3>What's Genuinely Solid</h3>
+    <span class="toggle-icon">&#9654;</span>
+  </div>
+  <div class="module-body">
+    <div class="good-box"><strong>Event Store:</strong> Truly immutable, well-indexed, configurable retention with background pruning. 18 thorough tests. Clean design.</div>
+    <div class="good-box"><strong>State Detection:</strong> Sophisticated multi-signal system with time-decay, graduated confidence, and priority override. 42 tests including 5 real tmux fixture tests. The complexity is managed well.</div>
+    <div class="good-box"><strong>Notification Engine:</strong> Complete lifecycle from trigger to consumption. Immutable event pattern for mark-as-read. Real-time channel. 18 tests.</div>
+    <div class="good-box"><strong>Registry Persistence:</strong> Atomic writes, file locking with <code>gofrs/flock</code>, merge, configurable pruning. 6 concurrent access stress tests. Production-grade.</div>
+    <div class="good-box"><strong>Conversation Service:</strong> 3-layer subscription architecture is well-designed even if unused. Cache uses both TTL and mtime. Topology integration chain works end-to-end.</div>
+    <div class="good-box"><strong>Integration Tests:</strong> Docker-based SSH+tmux tests are the gold standard for this project. 10 tests covering real-world scenarios.</div>
+  </div>
+</div>
+
+<div class="module-section collapsible open" onclick="this.classList.toggle('open')">
+  <div class="module-header">
+    <h3>Phase 3 Readiness Summary</h3>
+    <span class="toggle-icon">&#9654;</span>
+  </div>
+  <div class="module-body">
+    <div class="bug-box"><strong>Must fix before Phase 3:</strong> P0 SSH host key fallback (security), P1 ConnectionPool mutex (concurrency). Both were critique entry criteria. Additionally: parser duplicate event bug should be fixed to avoid corrupting Phase 3 activity data.</div>
+    <div class="concern-box"><strong>Should fix before Phase 3:</strong> REST API CORS protection (before any network-facing deployment), session list server grouping (before adding more servers), parser test coverage for real Claude Code patterns (before trusting parser output for Phase 3 actions).</div>
+    <div class="good-box"><strong>Ready for Phase 3 as-is:</strong> Event store, state detection, notification engine, artifact profiles, conversation service, topology integration, registry persistence, tmux capture/control. These are solid foundations.</div>
+  </div>
+</div>
+
+<div class="footer">
+  Warren Phase 2 Deep Audit Report &mdash; Generated 2026-05-26 &mdash; 9 parallel audit agents, 248 tests verified
+</div>
+
+<script>
+  // Make collapsible sections toggleable
+  document.querySelectorAll('.collapsible').forEach(el => {
+    el.addEventListener('click', () => el.classList.toggle('open'));
+  });
+</script>
+
+</body>
+</html>
