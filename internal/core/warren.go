@@ -26,10 +26,10 @@ type Warren struct {
 	artifactManager *ArtifactProfileManager
 
 	// Configuration
-	pollInterval           time.Duration
-	minConfidence          float64
-	registryPath           string
-	cacheTTL               time.Duration
+	pollInterval  time.Duration
+	minConfidence float64
+	registryPath  string
+	cacheTTL      time.Duration
 
 	// Session tracking
 	sessions        map[string]*MonitoredSession
@@ -65,27 +65,32 @@ type MonitoredSession struct {
 
 // Config configures Warren behavior
 type Config struct {
-	PollInterval         time.Duration
-	MinConfidence        float64
-	DBPath               string
-	ConfigDir            string
-	EventRetentionPeriod time.Duration // How long to keep events (default: 30 days)
-	EventPruningInterval time.Duration // How often to prune events (default: 24 hours)
-	CacheTTL             time.Duration // How long to cache conversation files (default: 5 seconds)
+	PollInterval           time.Duration
+	MinConfidence          float64
+	DBPath                 string
+	ConfigDir              string
+	EventRetentionPeriod   time.Duration // How long to keep events (default: 30 days)
+	EventPruningInterval   time.Duration // How often to prune events (default: 24 hours)
+	CacheTTL               time.Duration // How long to cache conversation files (default: 5 seconds)
 	RegistryPruneThreshold time.Duration // How old sessions must be to prune (default: 24 hours)
 
 	// Agent discovery
-	EnableAutoDiscovery  bool          // Enable automatic agent discovery
-	DiscoveryInterval    time.Duration // How often to run discovery (default: 5 minutes)
+	EnableAutoDiscovery bool          // Enable automatic agent discovery
+	DiscoveryInterval   time.Duration // How often to run discovery (default: 5 minutes)
 }
 
-// DefaultConfig returns sensible defaults
+// DefaultConfig returns sensible defaults.
+//
+// DBPath and ConfigDir resolve under $HOME/.warren via DefaultDBPath() /
+// DefaultConfigDir(). Prior to Phase 2 audit remediation this returned a
+// cwd-relative "warren.db", which silently orphaned existing event data
+// every time a user launched warren-web from a new directory.
 func DefaultConfig() *Config {
 	return &Config{
 		PollInterval:           500 * time.Millisecond,
 		MinConfidence:          0.7,
-		DBPath:                 "warren.db",
-		ConfigDir:              ".warren",
+		DBPath:                 DefaultDBPath(),
+		ConfigDir:              DefaultConfigDir(),
 		EventRetentionPeriod:   30 * 24 * time.Hour, // 30 days
 		EventPruningInterval:   24 * time.Hour,      // daily
 		CacheTTL:               5 * time.Second,     // 5 seconds
@@ -144,6 +149,12 @@ func NewWarren(config *Config) (*Warren, error) {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
+	// Ensure the config directory exists so the event store, server registry,
+	// and session registry can all open files under it. Idempotent.
+	if err := EnsureConfigDir(config.ConfigDir); err != nil {
+		return nil, fmt.Errorf("failed to ensure config dir %s: %w", config.ConfigDir, err)
+	}
+
 	// Initialize event store with retention configuration
 	storeConfig := &events.StoreConfig{
 		DBPath:          config.DBPath,
@@ -185,25 +196,28 @@ func NewWarren(config *Config) (*Warren, error) {
 
 	serverRegistry, err := NewServerRegistry(config.ConfigDir)
 	if err != nil {
+		// Cancel the context we created above so callers do not leak a
+		// goroutine waiting on it when NewWarren itself fails.
+		cancel()
 		return nil, fmt.Errorf("failed to create server registry: %w", err)
 	}
 
 	return &Warren{
-		tmuxClient:             tmuxClient,
-		parser:                 parser,
-		stateDetector:          stateDetector,
-		eventStore:             eventStore,
-		notifEngine:            notifEngine,
-		artifactManager:        artifactManager,
-		pollInterval:           config.PollInterval,
-		minConfidence:          config.MinConfidence,
-		registryPath:           registryPath,
-		cacheTTL:               config.CacheTTL,
-		sessions:               make(map[string]*MonitoredSession),
-		sessionRegistry:        sessionRegistry,
-		serverRegistry:         serverRegistry,
-		ctx:                    ctx,
-		cancel:                 cancel,
+		tmuxClient:      tmuxClient,
+		parser:          parser,
+		stateDetector:   stateDetector,
+		eventStore:      eventStore,
+		notifEngine:     notifEngine,
+		artifactManager: artifactManager,
+		pollInterval:    config.PollInterval,
+		minConfidence:   config.MinConfidence,
+		registryPath:    registryPath,
+		cacheTTL:        config.CacheTTL,
+		sessions:        make(map[string]*MonitoredSession),
+		sessionRegistry: sessionRegistry,
+		serverRegistry:  serverRegistry,
+		ctx:             ctx,
+		cancel:          cancel,
 	}, nil
 }
 
@@ -391,7 +405,7 @@ func (w *Warren) pollSession(agentID string) error {
 	return nil
 }
 
-	// handlePollError handles errors during polling
+// handlePollError handles errors during polling
 func (w *Warren) handlePollError(agentID string, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -513,4 +527,3 @@ func TmuxClientForServer(server *Server) *tmux.Client {
 	}
 	return tmux.NewClient(tmux.NewRemoteExecutor(server.User, server.Host, port))
 }
-

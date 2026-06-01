@@ -9,96 +9,166 @@ import (
 	"github.com/lfu/warren/internal/events"
 )
 
-// ActivityParser parses captured pane content into structured activity events
+// ActivityParser parses captured pane content into structured activity events.
+//
+// Design (Phase 2 audit, Batch 1, Item 2 — Option C):
+//
+// Earlier the parser ran four independent passes (parseChat,
+// parseFileInteractions, parseToolUsage, parsePrompts) over the same input.
+// Because the chat regex `●\s+[^(].+` matched any "● ..." line — including
+// `● Read /file`, `● Bash(...)`, `● Edit(...)` — the same line could be
+// reported as both a chat event AND a typed (file/tool) event. That double-
+// emission, plus several legacy over-broad regexes (`(?i)running\s+tests`,
+// `(?i)executing\s+command:`, `(?i)Read\s+tool.*?file_path`), produced
+// duplicate and false-positive activity events.
+//
+// We do not have RE2 lookaround in Go, so a regex-only fix is impossible.
+// Instead, Parse() runs a single line-by-line dispatcher with a precedence
+// ladder. Each line produces AT MOST ONE event:
+//
+//  1. Permission — most specific anchors first
+//     ("Esc to cancel · Tab to amend", "Allowed by auto mode", "❯ N. Option")
+//  2. Question   — `●` + line ending in `?` (within the last 10 non-empty
+//     lines only, preserving the existing tail-only behaviour)
+//  3. File       — `● Read|Edit|Write` + path
+//  4. Tool       — `● Bash|Agent|Skill|LSP|WebSearch|WebFetch|Grep|Glob`
+//  5. Chat       — `●` or `❯` fallback (everything else with those prefixes)
+//
+// Degradation contract: a brand-new tool name (say `● Task(...)`) will not
+// match level 4, so it falls through to level 5 and is emitted as a chat
+// event with role=assistant. That is correct — Warren still records the
+// line, and adding the new tool to level 4 later promotes it to a tool
+// event without further changes. No silent data loss.
+//
+// Out of scope for this batch: unification with `internal/state/` patterns
+// (tracked separately as Batch 3 #19).
 type ActivityParser struct {
-	// Patterns for detecting different activity types
-	chatPatterns       []*regexp.Regexp
-	filePatterns       []*regexp.Regexp
-	toolPatterns       []*regexp.Regexp
-	permissionPatterns []*regexp.Regexp
-	questionPatterns   []*regexp.Regexp
+	// Level 1: permission anchors. Most specific first.
+	permissionAnchors []*regexp.Regexp
+
+	// Level 2: question detection patterns. Applied only to the last 10
+	// non-empty lines.
+	questionLineAnchors []*regexp.Regexp
+
+	// Level 3: file operation extractors. Each carries an operation tag
+	// ("read"/"edit"/"write") because the regex alone cannot disambiguate
+	// `● Read N files` from `● Edit(p)` cheaply.
+	fileExtractors []fileExtractor
+
+	// Level 4: tool extractors. Each carries the canonical tool name so we
+	// avoid the case-inconsistent switch the previous implementation used
+	// (`strings.Contains(match, "Bash")` paired with a `(?i)` regex match).
+	toolExtractors []toolExtractor
+
+	// Level 5: chat fallback prefixes (Claude Code UI `●` / `❯`, plus
+	// legacy `user:` / `assistant:` / `claude:`).
+	chatPrefixCC     *regexp.Regexp // ● ...
+	chatPrefixUser   *regexp.Regexp // ❯ ...
+	chatLegacyUser   *regexp.Regexp // ^user:
+	chatLegacyAssist *regexp.Regexp // ^(assistant|claude):
+
+	// Permission content scan (whole-content, NOT per-line) for legacy
+	// "permission required" / "[y/n]" prose that does not start with `●`.
+	permissionContentAnchors []*regexp.Regexp
+
+	// Block-level question shapes (whole-content): the multiple-choice
+	// detector ("1. ..." / "2. ..." within the trailing 10 non-empty lines)
+	// and the natural-language fallbacks ("Would you like...?", etc.).
+	multipleChoiceLine *regexp.Regexp
+	naturalQuestion    []*regexp.Regexp
+}
+
+type fileExtractor struct {
+	re        *regexp.Regexp
+	operation string // "read" / "edit" / "write"
+}
+
+type toolExtractor struct {
+	re   *regexp.Regexp
+	name string // "bash" / "agent" / "skill" / "lsp" / "websearch" / "webfetch" / "grep" / "glob"
 }
 
 // NewActivityParser creates a new activity parser
 func NewActivityParser() *ActivityParser {
 	return &ActivityParser{
-		chatPatterns: []*regexp.Regexp{
-			// Real Claude Code UI: ❯ text for user input
-			regexp.MustCompile(`^\s*❯\s+.+`),
-			// Real Claude Code UI: ● text for assistant output
-			regexp.MustCompile(`^\s*●\s+[^(].+`),
-			// Legacy patterns for backward compatibility
-			regexp.MustCompile(`(?i)^user:`),
-			regexp.MustCompile(`(?i)^assistant:`),
-			regexp.MustCompile(`(?i)^claude:`),
-		},
-		filePatterns: []*regexp.Regexp{
-			// Real Claude Code UI: ● Read file_path or Read N files
-			regexp.MustCompile(`●\s+Read\s+(.+)`),
-			// Real Claude Code UI: ● Edit(file_path)
-			regexp.MustCompile(`●\s+Edit\((.+?)\)`),
-			// Real Claude Code UI: ● Write(file_path)
-			regexp.MustCompile(`●\s+Write\((.+?)\)`),
-			// Legacy patterns
-			regexp.MustCompile(`(?i)Read\s+tool.*?file_path`),
-			regexp.MustCompile(`(?i)Edit\s+tool.*?file_path`),
-			regexp.MustCompile(`(?i)Write\s+tool.*?file_path`),
-			regexp.MustCompile(`(?i)reading\s+file:\s+(.+)`),
-			regexp.MustCompile(`(?i)editing\s+file:\s+(.+)`),
-			regexp.MustCompile(`(?i)writing\s+file:\s+(.+)`),
-		},
-		toolPatterns: []*regexp.Regexp{
-			// Real Claude Code UI: ● Bash(command)
-			regexp.MustCompile(`●\s+Bash\(`),
-			// Real Claude Code UI: ● Agent(name)
-			regexp.MustCompile(`●\s+Agent\(`),
-			// Real Claude Code UI: ● Skill(name)
-			regexp.MustCompile(`●\s+Skill\(`),
-			// Real Claude Code UI: ● LSP(operation)
-			regexp.MustCompile(`●\s+LSP\(`),
-			// Real Claude Code UI: ● WebSearch(query)
-			regexp.MustCompile(`●\s+WebSearch\(`),
-			// Real Claude Code UI: ● WebFetch(url)
-			regexp.MustCompile(`●\s+WebFetch\(`),
-			// Real Claude Code UI: ● Grep(pattern)
-			regexp.MustCompile(`●\s+Grep\(`),
-			// Real Claude Code UI: ● Glob(pattern)
-			regexp.MustCompile(`●\s+Glob\(`),
-			// Legacy patterns
-			regexp.MustCompile(`(?i)Bash\s+tool`),
-			regexp.MustCompile(`(?i)LSP\s+tool`),
-			regexp.MustCompile(`(?i)WebSearch\s+tool`),
-			regexp.MustCompile(`(?i)executing\s+command:`),
-			regexp.MustCompile(`(?i)running\s+tests`),
-		},
-		permissionPatterns: []*regexp.Regexp{
+		permissionAnchors: []*regexp.Regexp{
 			// Real Claude Code UI: "Esc to cancel · Tab to amend" footer
 			regexp.MustCompile(`Esc to cancel\s*·?\s*Tab to amend`),
-			// Real Claude Code UI: choice selector ❯ N. Option
-			regexp.MustCompile(`❯\s+\d+\.\s+`),
-			// Real Claude Code UI: "Allowed by auto mode" (permission auto-approved)
+			// Real Claude Code UI: choice selector "❯ N. Option"
+			regexp.MustCompile(`^\s*❯\s+\d+\.\s+`),
+			// Real Claude Code UI: "Allowed by auto mode"
 			regexp.MustCompile(`(?i)Allowed by auto mode`),
-			// Legacy patterns
+		},
+		questionLineAnchors: []*regexp.Regexp{
+			// Real Claude Code UI: assistant question — `● ... ?` ending in '?'.
+			regexp.MustCompile(`^\s*●\s+.+\?\s*$`),
+			// Legacy AskUserQuestion tool surface.
+			regexp.MustCompile(`(?i)AskUserQuestion`),
+			// Legacy question shapes (single-line).
+			regexp.MustCompile(`^What would you like .*\?$`),
+			regexp.MustCompile(`^Should I .*\?$`),
+			regexp.MustCompile(`^Would you like .*\?$`),
+			regexp.MustCompile(`^Do you want .*\?$`),
+			regexp.MustCompile(`^How should I .*\?$`),
+			regexp.MustCompile(`^Which .*would you prefer\?$`),
+		},
+		fileExtractors: []fileExtractor{
+			// `● Read <path-or-summary>`. The argument is free-form because
+			// Claude Code emits both `● Read /foo/bar.go` and
+			// `● Read 3 files`; the captured group is whatever follows.
+			{re: regexp.MustCompile(`^\s*●\s+Read\s+(.+)`), operation: "read"},
+			{re: regexp.MustCompile(`^\s*●\s+Edit\((.+?)\)`), operation: "edit"},
+			{re: regexp.MustCompile(`^\s*●\s+Write\((.+?)\)`), operation: "write"},
+			// Legacy "reading file: <path>" prose lines (kept for backward
+			// compatibility with older captures).
+			{re: regexp.MustCompile(`(?i)^reading\s+file:\s+(.+)$`), operation: "read"},
+			{re: regexp.MustCompile(`(?i)^editing\s+file:\s+(.+)$`), operation: "edit"},
+			{re: regexp.MustCompile(`(?i)^writing\s+file:\s+(.+)$`), operation: "write"},
+		},
+		toolExtractors: []toolExtractor{
+			{re: regexp.MustCompile(`^\s*●\s+Bash\(`), name: "bash"},
+			{re: regexp.MustCompile(`^\s*●\s+Agent\(`), name: "agent"},
+			{re: regexp.MustCompile(`^\s*●\s+Skill\(`), name: "skill"},
+			{re: regexp.MustCompile(`^\s*●\s+LSP\(`), name: "lsp"},
+			{re: regexp.MustCompile(`^\s*●\s+WebSearch\(`), name: "websearch"},
+			{re: regexp.MustCompile(`^\s*●\s+WebFetch\(`), name: "webfetch"},
+			{re: regexp.MustCompile(`^\s*●\s+Grep\(`), name: "grep"},
+			{re: regexp.MustCompile(`^\s*●\s+Glob\(`), name: "glob"},
+			// Legacy "Bash tool / LSP tool / WebSearch tool" prose. Kept
+			// case-insensitive and substring-matching to preserve backward
+			// compatibility with older captures (audit specifically left
+			// these in scope and only flagged `(?i)running\s+tests` and
+			// `(?i)executing\s+command:` as over-broad).
+			{re: regexp.MustCompile(`(?i)bash\s+tool`), name: "bash"},
+			{re: regexp.MustCompile(`(?i)lsp\s+tool`), name: "lsp"},
+			{re: regexp.MustCompile(`(?i)websearch\s+tool`), name: "websearch"},
+			// Legacy "executing command:" prose anchored to start-of-line.
+			// The unanchored `(?i)executing\s+command:` it replaces matched
+			// inside chat lines (audit #2: duplicate emission).
+			{re: regexp.MustCompile(`(?i)^executing\s+command:`), name: "bash"},
+			// Note: the unanchored `(?i)running\s+tests` from the legacy
+			// patterns is deliberately dropped — it fired on plain chat like
+			// "I'm running tests now" and produced spurious tool events.
+		},
+		chatPrefixCC:     regexp.MustCompile(`^\s*●\s+.+`),
+		chatPrefixUser:   regexp.MustCompile(`^\s*❯\s+.+`),
+		chatLegacyUser:   regexp.MustCompile(`(?i)^user:`),
+		chatLegacyAssist: regexp.MustCompile(`(?i)^(assistant|claude):`),
+		permissionContentAnchors: []*regexp.Regexp{
 			regexp.MustCompile(`(?i)permission\s+required`),
 			regexp.MustCompile(`(?i)approve\s+or\s+deny`),
 			regexp.MustCompile(`(?i)waiting\s+for\s+approval`),
 			regexp.MustCompile(`(?i)\[y/n\]`),
 			regexp.MustCompile(`(?i)allow\s+this\s+action`),
 		},
-		questionPatterns: []*regexp.Regexp{
-			// Real Claude Code UI: ● question text?
-			regexp.MustCompile(`●\s+.+\?$`),
-			// Legacy: AskUserQuestion tool usage
-			regexp.MustCompile(`(?i)AskUserQuestion`),
-			// Legacy question patterns
-			regexp.MustCompile(`(?m)^What would you like .*\?$`),
-			regexp.MustCompile(`(?m)^Should I .*\?$`),
-			regexp.MustCompile(`(?m)^Would you like .*\?$`),
-			regexp.MustCompile(`(?m)^Do you want .*\?$`),
-			regexp.MustCompile(`(?m)^How should I .*\?$`),
-			regexp.MustCompile(`(?m)^Which .*would you prefer\?$`),
-			// Multiple choice patterns (numbered options)
-			regexp.MustCompile(`(?m)^\d+\.\s+.+$`),
+		multipleChoiceLine: regexp.MustCompile(`^\d+\.\s+.+$`),
+		naturalQuestion: []*regexp.Regexp{
+			regexp.MustCompile(`^What would you like .*\?$`),
+			regexp.MustCompile(`^Should I .*\?$`),
+			regexp.MustCompile(`^Would you like .*\?$`),
+			regexp.MustCompile(`^Do you want .*\?$`),
+			regexp.MustCompile(`^How should I .*\?$`),
+			regexp.MustCompile(`^Which .*would you prefer\?$`),
 		},
 	}
 }
@@ -110,7 +180,13 @@ type ParseResult struct {
 	DetectedTypes []string
 }
 
-// Parse analyzes captured content and extracts activity events
+// Parse analyzes captured content and extracts activity events.
+//
+// Each non-empty line is classified by a single-dispatch precedence ladder
+// (see the ActivityParser doc comment) and produces at most one event. A
+// final whole-content sweep adds block-level prompts (permission prose,
+// multiple-choice questions, natural-language questions) that span multiple
+// lines or do not anchor to a `●`/`❯` prefix.
 func (p *ActivityParser) Parse(agentID string, content string) (*ParseResult, error) {
 	result := &ParseResult{
 		Activities:    []*events.AgentActivityEvent{},
@@ -120,286 +196,302 @@ func (p *ActivityParser) Parse(agentID string, content string) (*ParseResult, er
 	lines := strings.Split(content, "\n")
 	timestamp := time.Now()
 
-	// Parse chat messages
-	chatActivities := p.parseChat(agentID, lines, timestamp)
-	result.Activities = append(result.Activities, chatActivities...)
-	if len(chatActivities) > 0 {
-		result.DetectedTypes = append(result.DetectedTypes, "chat")
+	// Build the "is this line in the last 10 non-empty lines" set for the
+	// question detector. Real Claude Code questions live at the bottom of
+	// the pane; matching anywhere produces false positives on transcript
+	// history.
+	tailQuestionLines := lastNonEmptyLineSet(lines, 10)
+
+	seenTypes := map[string]bool{}
+
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+
+		activity := p.classifyLine(agentID, line, i, tailQuestionLines, timestamp)
+		if activity == nil {
+			continue
+		}
+
+		result.Activities = append(result.Activities, activity)
+		t := activityTopType(activity)
+		if !seenTypes[t] {
+			seenTypes[t] = true
+			result.DetectedTypes = append(result.DetectedTypes, t)
+		}
 	}
 
-	// Parse file interactions
-	fileActivities := p.parseFileInteractions(agentID, content, timestamp)
-	result.Activities = append(result.Activities, fileActivities...)
-	if len(fileActivities) > 0 {
-		result.DetectedTypes = append(result.DetectedTypes, "file")
+	// Block-level sweeps (whole-content, NOT per-line). These run AFTER
+	// the per-line dispatch so multi-line shapes can fire even if every
+	// individual line was already classified above.
+
+	if extra := p.scanPermissionContent(agentID, content, timestamp); extra != nil {
+		result.Activities = append(result.Activities, extra)
+		if !seenTypes["prompt"] {
+			seenTypes["prompt"] = true
+			result.DetectedTypes = append(result.DetectedTypes, "prompt")
+		}
 	}
 
-	// Parse tool usage
-	toolActivities := p.parseToolUsage(agentID, content, timestamp)
-	result.Activities = append(result.Activities, toolActivities...)
-	if len(toolActivities) > 0 {
-		result.DetectedTypes = append(result.DetectedTypes, "tool")
+	if extra := p.scanMultipleChoice(agentID, lines, timestamp); extra != nil {
+		result.Activities = append(result.Activities, extra)
+		if !seenTypes["prompt"] {
+			seenTypes["prompt"] = true
+			result.DetectedTypes = append(result.DetectedTypes, "prompt")
+		}
+	} else if extras := p.scanNaturalQuestions(agentID, lines, timestamp); len(extras) > 0 {
+		// Only fire the natural-language fallback when there is no
+		// multiple-choice question — otherwise we'd double-emit.
+		for _, e := range extras {
+			result.Activities = append(result.Activities, e)
+		}
+		if !seenTypes["prompt"] {
+			seenTypes["prompt"] = true
+			result.DetectedTypes = append(result.DetectedTypes, "prompt")
+		}
 	}
 
-	// Parse prompts (permissions and questions)
-	promptActivities := p.parsePrompts(agentID, content, timestamp)
-	result.Activities = append(result.Activities, promptActivities...)
-	if len(promptActivities) > 0 {
-		result.DetectedTypes = append(result.DetectedTypes, "prompt")
-	}
-
-	// Calculate confidence based on number of detected activities
+	// Confidence: same shape as the previous implementation so existing
+	// thresholds keep meaning what they meant before.
 	if len(result.Activities) > 0 {
-		result.Confidence = 0.8 // Base confidence
+		result.Confidence = 0.8
 		if len(result.DetectedTypes) > 2 {
-			result.Confidence = 0.95 // High confidence with multiple activity types
+			result.Confidence = 0.95
 		}
 	}
 
 	return result, nil
 }
 
-// parseChat extracts chat messages from content
-func (p *ActivityParser) parseChat(agentID string, lines []string, timestamp time.Time) []*events.AgentActivityEvent {
-	activities := []*events.AgentActivityEvent{}
+// classifyLine runs the precedence ladder over a single trimmed line.
+// Returns nil when the line matches no level.
+func (p *ActivityParser) classifyLine(agentID, line string, _ int, tailQuestionLines map[string]bool, ts time.Time) *events.AgentActivityEvent {
+	// Level 1: Permission anchors (most specific).
+	for _, re := range p.permissionAnchors {
+		if re.MatchString(line) {
+			return &events.AgentActivityEvent{
+				AgentID:      agentID,
+				ActivityType: "prompt",
+				Content:      line,
+				Metadata:     map[string]string{"prompt_type": "permission"},
+				Timestamp:    ts,
+			}
+		}
+	}
 
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	// Level 2: Question — assistant `● ... ?` line in the tail window.
+	if tailQuestionLines[line] {
+		for _, re := range p.questionLineAnchors {
+			if re.MatchString(line) {
+				return &events.AgentActivityEvent{
+					AgentID:      agentID,
+					ActivityType: "prompt",
+					Content:      line,
+					Metadata:     map[string]string{"prompt_type": "question"},
+					Timestamp:    ts,
+				}
+			}
+		}
+	}
+
+	// Level 3: File operations.
+	for _, fe := range p.fileExtractors {
+		if m := fe.re.FindStringSubmatch(line); m != nil {
+			filePath := ""
+			if len(m) > 1 {
+				filePath = strings.TrimSpace(m[1])
+			}
+			return &events.AgentActivityEvent{
+				AgentID:      agentID,
+				ActivityType: "file",
+				Content:      line,
+				Metadata: map[string]string{
+					"operation": fe.operation,
+					"file_path": filePath,
+				},
+				Timestamp: ts,
+			}
+		}
+	}
+
+	// Level 4: Tool usage. Tool name comes from the extractor table, NOT a
+	// case-sensitive `strings.Contains` switch (audit fix: the previous
+	// switch used literal "Bash" against a `(?i)` regex match and silently
+	// misclassified legacy `bash tool` lines as "unknown").
+	for _, te := range p.toolExtractors {
+		if te.re.MatchString(line) {
+			return &events.AgentActivityEvent{
+				AgentID:      agentID,
+				ActivityType: "tool",
+				Content:      line,
+				Metadata:     map[string]string{"tool_name": te.name},
+				Timestamp:    ts,
+			}
+		}
+	}
+
+	// Level 5: Chat fallback.
+	switch {
+	case p.chatPrefixCC.MatchString(line):
+		return chatEvent(agentID, line, "assistant", ts)
+	case p.chatPrefixUser.MatchString(line):
+		return chatEvent(agentID, line, "user", ts)
+	case p.chatLegacyUser.MatchString(line):
+		return chatEvent(agentID, line, "user", ts)
+	case p.chatLegacyAssist.MatchString(line):
+		return chatEvent(agentID, line, "assistant", ts)
+	}
+
+	return nil
+}
+
+func chatEvent(agentID, line, role string, ts time.Time) *events.AgentActivityEvent {
+	return &events.AgentActivityEvent{
+		AgentID:      agentID,
+		ActivityType: "chat",
+		Content:      line,
+		Metadata:     map[string]string{"role": role},
+		Timestamp:    ts,
+	}
+}
+
+// activityTopType maps an activity to the top-level "detected type" string
+// used in ParseResult.DetectedTypes. Tools/files/chat/prompt are surfaced
+// distinctly even though the per-line dispatcher classifies each event.
+func activityTopType(a *events.AgentActivityEvent) string {
+	return a.ActivityType
+}
+
+// lastNonEmptyLineSet returns a set of trimmed lines that are among the
+// last n non-empty lines of the input. Used by the question detector.
+func lastNonEmptyLineSet(lines []string, n int) map[string]bool {
+	set := map[string]bool{}
+	count := 0
+	for i := len(lines) - 1; i >= 0 && count < n; i-- {
+		l := strings.TrimSpace(lines[i])
+		if l == "" {
 			continue
 		}
+		set[l] = true
+		count++
+	}
+	return set
+}
 
-		for _, pattern := range p.chatPatterns {
-			if pattern.MatchString(line) {
-				role := "unknown"
-				if strings.HasPrefix(strings.ToLower(line), "user:") {
-					role = "user"
-				} else if strings.HasPrefix(strings.ToLower(line), "assistant:") || strings.HasPrefix(strings.ToLower(line), "claude:") {
-					role = "assistant"
-				} else if strings.HasPrefix(strings.TrimSpace(line), "❯") {
-					role = "user"
-				} else if strings.HasPrefix(strings.TrimSpace(line), "●") {
-					role = "assistant"
-				}
+// scanPermissionContent looks for legacy "permission required" style prose
+// that doesn't anchor to a `●` line. Emits at most one event.
+func (p *ActivityParser) scanPermissionContent(agentID, content string, ts time.Time) *events.AgentActivityEvent {
+	for _, re := range p.permissionContentAnchors {
+		if re.MatchString(content) {
+			return &events.AgentActivityEvent{
+				AgentID:      agentID,
+				ActivityType: "prompt",
+				Content:      re.FindString(content),
+				Metadata:     map[string]string{"prompt_type": "permission"},
+				Timestamp:    ts,
+			}
+		}
+	}
+	return nil
+}
 
-				activity := &events.AgentActivityEvent{
+// scanMultipleChoice detects a numbered-list multiple-choice question in
+// the last 10 non-empty lines. Returns a single prompt event listing all
+// detected options.
+func (p *ActivityParser) scanMultipleChoice(agentID string, lines []string, ts time.Time) *events.AgentActivityEvent {
+	last := lastNonEmptyLines(lines, 10)
+	options := []string{}
+	for _, line := range last {
+		if p.multipleChoiceLine.MatchString(line) {
+			options = append(options, line)
+		}
+	}
+	if len(options) < 2 {
+		return nil
+	}
+	return &events.AgentActivityEvent{
+		AgentID:      agentID,
+		ActivityType: "prompt",
+		Content:      strings.Join(options, "\n"),
+		Metadata: map[string]string{
+			"prompt_type":   "question",
+			"question_type": "multiple_choice",
+			"option_count":  fmt.Sprintf("%d", len(options)),
+		},
+		Timestamp: ts,
+	}
+}
+
+// scanNaturalQuestions matches plain-text "Would you like ...?" shapes in
+// the last 10 non-empty lines. Skips comment-ish lines (#, //, list
+// bullets) to keep markdown chatter out of the result.
+func (p *ActivityParser) scanNaturalQuestions(agentID string, lines []string, ts time.Time) []*events.AgentActivityEvent {
+	var out []*events.AgentActivityEvent
+	last := lastNonEmptyLines(lines, 10)
+	for _, line := range last {
+		if strings.HasPrefix(line, "//") ||
+			strings.HasPrefix(line, "#") ||
+			strings.Contains(line, "```") ||
+			strings.HasPrefix(line, "*") ||
+			strings.HasPrefix(line, "-") {
+			continue
+		}
+		for _, re := range p.naturalQuestion {
+			if re.MatchString(line) {
+				out = append(out, &events.AgentActivityEvent{
 					AgentID:      agentID,
-					ActivityType: "chat",
+					ActivityType: "prompt",
 					Content:      line,
-					Metadata: map[string]string{
-						"role": role,
-					},
-					Timestamp: timestamp,
-				}
-				activities = append(activities, activity)
+					Metadata:     map[string]string{"prompt_type": "question"},
+					Timestamp:    ts,
+				})
 				break
 			}
 		}
 	}
-
-	return activities
+	return out
 }
 
-// parseFileInteractions extracts file read/edit/write operations
-func (p *ActivityParser) parseFileInteractions(agentID string, content string, timestamp time.Time) []*events.AgentActivityEvent {
-	activities := []*events.AgentActivityEvent{}
-
-	for _, pattern := range p.filePatterns {
-		matches := pattern.FindAllStringSubmatch(content, -1)
-		for _, match := range matches {
-			operation := "unknown"
-			filePath := ""
-
-			if strings.Contains(strings.ToLower(match[0]), "read") {
-				operation = "read"
-			} else if strings.Contains(strings.ToLower(match[0]), "edit") {
-				operation = "edit"
-			} else if strings.Contains(strings.ToLower(match[0]), "write") {
-				operation = "write"
-			}
-
-			if len(match) > 1 {
-				filePath = match[1]
-			}
-
-			activity := &events.AgentActivityEvent{
-				AgentID:      agentID,
-				ActivityType: "file",
-				Content:      match[0],
-				Metadata: map[string]string{
-					"operation": operation,
-					"file_path": filePath,
-				},
-				Timestamp: timestamp,
-			}
-			activities = append(activities, activity)
-		}
-	}
-
-	return activities
-}
-
-// parseToolUsage extracts tool execution activities
-func (p *ActivityParser) parseToolUsage(agentID string, content string, timestamp time.Time) []*events.AgentActivityEvent {
-	activities := []*events.AgentActivityEvent{}
-
-	for _, pattern := range p.toolPatterns {
-		matches := pattern.FindAllString(content, -1)
-		for _, match := range matches {
-			toolName := "unknown"
-			matchLower := strings.ToLower(match)
-			switch {
-			case strings.Contains(match, "Bash"):
-				toolName = "bash"
-			case strings.Contains(match, "Agent"):
-				toolName = "agent"
-			case strings.Contains(match, "Skill"):
-				toolName = "skill"
-			case strings.Contains(matchLower, "lsp"):
-				toolName = "lsp"
-			case strings.Contains(matchLower, "websearch"):
-				toolName = "websearch"
-			case strings.Contains(matchLower, "webfetch"):
-				toolName = "webfetch"
-			case strings.Contains(match, "Grep"):
-				toolName = "grep"
-			case strings.Contains(match, "Glob"):
-				toolName = "glob"
-			}
-
-			activity := &events.AgentActivityEvent{
-				AgentID:      agentID,
-				ActivityType: "tool",
-				Content:      match,
-				Metadata: map[string]string{
-					"tool_name": toolName,
-				},
-				Timestamp: timestamp,
-			}
-			activities = append(activities, activity)
-		}
-	}
-
-	return activities
-}
-
-// parsePrompts extracts permission prompts and questions
-func (p *ActivityParser) parsePrompts(agentID string, content string, timestamp time.Time) []*events.AgentActivityEvent {
-	activities := []*events.AgentActivityEvent{}
-
-	// Check for permission prompts
-	for _, pattern := range p.permissionPatterns {
-		if pattern.MatchString(content) {
-			activity := &events.AgentActivityEvent{
-				AgentID:      agentID,
-				ActivityType: "prompt",
-				Content:      pattern.FindString(content),
-				Metadata: map[string]string{
-					"prompt_type": "permission",
-				},
-				Timestamp: timestamp,
-			}
-			activities = append(activities, activity)
-			break // Only one permission prompt per parse
-		}
-	}
-
-	// Check for questions - much more strict to avoid false positives
-	// Only detect questions that appear at the END of content (last non-empty lines)
-	lines := strings.Split(content, "\n")
-
-	// Get last 10 non-empty lines (where real questions and multiple choice appear)
-	lastLines := []string{}
-	for i := len(lines) - 1; i >= 0 && len(lastLines) < 10; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line != "" {
-			lastLines = append([]string{line}, lastLines...)
-		}
-	}
-
-	// Check for multiple choice questions (numbered options)
-	// Look for pattern: multiple consecutive lines starting with "1.", "2.", "3."
-	multipleChoiceCount := 0
-	for _, line := range lastLines {
-		if regexp.MustCompile(`^\d+\.\s+.+$`).MatchString(line) {
-			multipleChoiceCount++
-		}
-	}
-
-	// If we have 2+ numbered options, it's a multiple choice question
-	if multipleChoiceCount >= 2 {
-		// Collect all the options
-		optionsText := []string{}
-		for _, line := range lastLines {
-			if regexp.MustCompile(`^\d+\.\s+.+$`).MatchString(line) {
-				optionsText = append(optionsText, line)
-			}
-		}
-
-		activity := &events.AgentActivityEvent{
-			AgentID:      agentID,
-			ActivityType: "prompt",
-			Content:      strings.Join(optionsText, "\n"),
-			Metadata: map[string]string{
-				"prompt_type":    "question",
-				"question_type":  "multiple_choice",
-				"option_count":   fmt.Sprintf("%d", multipleChoiceCount),
-			},
-			Timestamp: timestamp,
-		}
-		activities = append(activities, activity)
-		return activities // Return early, we found a multiple choice question
-	}
-
-	// Check if any of the last lines match question patterns (for "?" questions)
-	for _, line := range lastLines {
-		// Skip lines that are clearly not questions to user
-		if strings.HasPrefix(line, "//") || // Code comments
-			strings.HasPrefix(line, "#") || // Comments
-			strings.Contains(line, "```") || // Code blocks
-			strings.HasPrefix(line, "*") || // Markdown lists
-			strings.HasPrefix(line, "-") { // Markdown lists
+// lastNonEmptyLines returns the last n non-empty trimmed lines, in original
+// order.
+func lastNonEmptyLines(lines []string, n int) []string {
+	out := []string{}
+	for i := len(lines) - 1; i >= 0 && len(out) < n; i-- {
+		l := strings.TrimSpace(lines[i])
+		if l == "" {
 			continue
 		}
-
-		for _, pattern := range p.questionPatterns {
-			if pattern.MatchString(line) {
-				activity := &events.AgentActivityEvent{
-					AgentID:      agentID,
-					ActivityType: "prompt",
-					Content:      line,
-					Metadata: map[string]string{
-						"prompt_type": "question",
-					},
-					Timestamp: timestamp,
-				}
-				activities = append(activities, activity)
-				break // Only one question per line
-			}
-		}
+		out = append([]string{l}, out...)
 	}
-
-	return activities
+	return out
 }
 
-// ExtractRecentChat extracts the most recent chat messages
+// ExtractRecentChat extracts the most recent chat messages.
+//
+// Mirrors the per-line chat classifier in classifyLine so the "most recent
+// chat" view stays consistent with what the dispatcher emits as chat
+// events. Legacy "user:" / "assistant:" / "claude:" prefixes still count.
 func (p *ActivityParser) ExtractRecentChat(content string, maxMessages int) []string {
 	lines := strings.Split(content, "\n")
 	messages := []string{}
+
+	isChat := func(line string) bool {
+		return p.chatPrefixCC.MatchString(line) ||
+			p.chatPrefixUser.MatchString(line) ||
+			p.chatLegacyUser.MatchString(line) ||
+			p.chatLegacyAssist.MatchString(line)
+	}
 
 	for i := len(lines) - 1; i >= 0 && len(messages) < maxMessages; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line == "" {
 			continue
 		}
-
-		for _, pattern := range p.chatPatterns {
-			if pattern.MatchString(line) {
-				messages = append([]string{line}, messages...) // Prepend to maintain order
-				break
-			}
+		if isChat(line) {
+			messages = append([]string{line}, messages...)
 		}
 	}
-
 	return messages
 }
