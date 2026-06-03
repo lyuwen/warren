@@ -12,19 +12,41 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 
 ## High Priority
 
-### 0a. SSH Host Key Verification Fails Open (P0/SEC — Phase 3 entry criterion)
+### 0a. ~~SSH Host Key Verification Fails Open~~ ✅ **RESOLVED** (Phase 3 entry criterion)
 
-**Issue:** `defaultHostKeyCallback` in `internal/core/server.go` silently falls back to `ssh.InsecureIgnoreHostKey()` when `~/.ssh/known_hosts` is missing or unreadable. This is MITM-prone — any user-facing surface that invokes `ConnectionPool.Get` against an unknown host will accept any server key without warning.
+**Issue:** `defaultHostKeyCallback` in `internal/core/server.go` silently fell back to `ssh.InsecureIgnoreHostKey()` when `~/.ssh/known_hosts` was missing or unreadable. This was MITM-prone — any user-facing surface that invoked `ConnectionPool.Get` against an unknown host would accept any server key without warning.
 
-**Impact:** SECURITY. The moment Warren exposes remote-server connections to user input (Phase 3 multi-server fanout), this becomes a CVE-class fail-open default.
+**Impact:** SECURITY. Phase 3 multi-server fanout would have exposed this as a CVE-class fail-open default.
 
-**Effort:** Small (1-2 hours)
+**Resolution:** Replaced `defaultHostKeyCallback` with `hostKeyCallbackForServer(*Server)` in Batch 1 (Phase 2 audit remediation, June 2026). New behaviour:
 
-**Recommendation:** Gate the insecure fallback behind explicit `WARREN_SSH_INSECURE_HOSTKEY=1` env opt-in. Default behavior: return an error if known_hosts is missing/unreadable. This MUST land before Phase 3 ships any remote-host UX.
+- **Default is strict.** If `~/.ssh/known_hosts` is missing, unreadable, or malformed the function returns an actionable error (with three distinct messages — `missing`, `unreadable`, `malformed`) and refuses to produce a callback.
+- **Insecure fallback is explicit opt-in.** Operator must set `WARREN_SSH_INSECURE_HOSTKEY=1`. When that env var is set we still emit a WARN log once per (host:port) per process lifetime so operators grepping logs can spot endpoints that were accepted insecurely.
+- **Function signature accepts `*Server`** so a future per-server `InsecureHostKey bool` field on `Server` (see new P1 entry below) can layer in without breaking callers.
 
-**Workaround:** Ensure `~/.ssh/known_hosts` is populated for all target hosts before invoking `ConnectionPool.Get`.
+**Resolved:** June 1, 2026 — commit on `feat/phase2-audit-batch1`.
 
-**Tracking:** Flagged by Phase 2 Critique (docs/reviews/phase2-fixes-critique.md). P0 entry criterion for Phase 3.
+**Critique pre-validation:** `docs/critiques/phase2-audit-batch1-planval.md` (Item 1 verdict + required changes).
+
+**Code Location:** `internal/core/server.go` (`hostKeyCallbackForServer`, `loadKnownHostsCallback`, `newHostKeyUnavailableError`).
+
+**Tests:** `internal/core/hostkey_test.go` covers all five Critique-mandated cases — present-and-valid, missing-no-env, missing-with-env, unreadable-no-env, malformed-no-env — plus the once-per-host WARN-log invariant. `internal/core/server_test.go` `TestConnectionPool_ConcurrentGet` and `TestConnectionPool_RemoteServerDialError` set `t.Setenv("WARREN_SSH_INSECURE_HOSTKEY", "1")` so they keep exercising the dial path on CI runners without a populated known_hosts.
+
+**Tracking:** Flagged by Phase 2 Critique (docs/reviews/phase2-fixes-critique.md). P0 entry criterion for Phase 3 — now met.
+
+---
+
+### 0a-followup. Per-server `insecure_host_key` config field (P1 — Phase 3 entry-criterion follow-up)
+
+**Issue:** The Batch 1 fix for 0a routes the insecure-fallback opt-in through a binary-global env var (`WARREN_SSH_INSECURE_HOSTKEY=1`). That conflates "every SSH connection in this process is insecure" with "this one dev VM has no known_hosts entry" — an operator who needs the latter is forced to take the former and inherit MITM exposure on every other host in the same Warren process.
+
+**Impact:** Operational. The env var is fit-for-purpose as a minimum-viable fallback (and was the only realistic scope for Batch 1), but it does not let operators express the natural axis "production hosts strict / dev VM lax."
+
+**Effort:** Small (2-4 hours)
+
+**Recommendation:** Add a per-server `insecure_host_key: bool` field on `Server` in `internal/core/server.go` (and the corresponding `servers.yaml` schema). `hostKeyCallbackForServer(*Server)` already accepts `*Server` exactly so this can layer in without breaking callers; a TODO comment in `hostKeyCallbackForServer` references this entry. The env var should remain as a process-wide override for CI / scratch environments, with the per-server field taking precedence.
+
+**Tracking:** New entry filed by Batch 1 remediation, June 2026. Marked P1 — should land before Phase 3 multi-server UX exposes the env-var-only design to real operators.
 
 ---
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -11,17 +12,37 @@ import (
 )
 
 func main() {
-	// Create Warren instance with default config
-	config := core.DefaultConfig()
-	config.DBPath = os.ExpandEnv("$HOME/.warren/warren.db")
-	config.ConfigDir = os.ExpandEnv("$HOME/.warren")
+	// Parse command-line flags. -db defaults to core.DefaultDBPath() so the
+	// --help text shows the resolved canonical path under $HOME/.warren.
+	dbPath := flag.String("db", core.DefaultDBPath(), "Database path")
+	flag.Parse()
 
-	// Ensure .warren directory exists
-	warrenDir := os.ExpandEnv("$HOME/.warren")
-	if err := os.MkdirAll(warrenDir, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create Warren directory: %v\n", err)
+	// Detect whether the user explicitly passed -db via flag.Visit (NOT by
+	// value comparison — passing the default path explicitly is legitimate
+	// and must not trigger the legacy-DB warning).
+	userOverrodeDB := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "db" {
+			userOverrodeDB = true
+		}
+	})
+
+	// Refuse to start if a legacy cwd-relative warren.db would be silently
+	// orphaned by the new $HOME/.warren default.
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to resolve current working directory: %v\n", err)
 		os.Exit(1)
 	}
+	if err := core.CheckLegacyDB(userOverrodeDB, cwd, core.DefaultDBPath()); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
+	}
+
+	// Create Warren with default config; DBPath/ConfigDir resolve via the
+	// canonical helpers. core.NewWarren ensures ConfigDir exists.
+	config := core.DefaultConfig()
+	config.DBPath = *dbPath
 
 	warren, err := core.NewWarren(config)
 	if err != nil {

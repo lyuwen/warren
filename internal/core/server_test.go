@@ -115,6 +115,14 @@ func TestConnectionPool_LocalServerRejected(t *testing.T) {
 // to catch races (run with -race). All calls target an unreachable server so
 // they should all return an error without corrupting internal state.
 func TestConnectionPool_ConcurrentGet(t *testing.T) {
+	// Opt in to insecure host-key mode so the test exercises the dial path
+	// regardless of whether the test machine has a populated
+	// ~/.ssh/known_hosts. Without this, hostKeyCallbackForServer would
+	// refuse before dial on a fresh CI runner and the test would still pass
+	// — but for the wrong reason (it asserts no race, not a specific error
+	// path, and we want the race coverage to actually reach dial).
+	t.Setenv("WARREN_SSH_INSECURE_HOSTKEY", "1")
+
 	pool := NewConnectionPool(100 * time.Millisecond)
 	defer pool.Close()
 
