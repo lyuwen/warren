@@ -50,17 +50,41 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 
 ---
 
-### 0b. ConnectionPool.Get Serializes the Entire Pool (P1/CONC — before multi-server)
+### 0b. ~~ConnectionPool.Get Serializes the Entire Pool~~ ✅ **RESOLVED** (Phase 3 entry criterion)
 
-**Issue:** `ConnectionPool.Get` holds `p.mu` across the full SSH `Dial` + handshake (`internal/core/server.go`). Under any slow target, every other Get call to any host blocks behind it. Single-supervisor / single-target usage hides this defect.
+**Issue:** `ConnectionPool.Get` held `p.mu` across the full SSH `Dial` + handshake (`internal/core/server.go`). Under any slow target, every other Get call to any host blocked behind it. Single-supervisor / single-target usage hid this defect.
 
-**Impact:** Concurrency. The moment Phase 3 fans out to multiple SSH targets in parallel, slow hosts will serialize all reconnection attempts and effectively starve the pool.
+**Impact:** Concurrency. The moment Phase 3 fans out to multiple SSH targets in parallel, slow hosts would have serialized all reconnection attempts and effectively starved the pool.
 
-**Effort:** Small-medium (half day)
+**Resolution:** Refactored `ConnectionPool.Get` in Batch 2 (Phase 2 audit remediation, June 2026) to a double-checked-locking + per-key in-flight promise (`connDial`) pattern. The pool's main mutex is now acquired only to read/install the in-flight entry; the SSH dial + handshake run outside the lock so calls to different servers proceed in parallel. Concurrent Get calls for the *same* server share a single `chan struct{}` ready channel and observe the same result, preserving dedup. Tests cover both invariants in `internal/core/server_test.go`.
 
-**Recommendation:** Switch to a double-checked locking pattern or per-key mutex so dial+handshake happen outside `p.mu`. Add a regression test that two slow Get() calls to different hosts overlap.
+**Resolved:** June 11, 2026 — commit on `feat/phase2-audit-batch2`.
 
-**Tracking:** Flagged by Phase 2 Reviewer and Critique. P1 before Phase 3 multi-server use.
+**Code Location:** `internal/core/server.go` (`ConnectionPool.Get`, `connDial`, `ConnectionPool.dial`).
+
+**Tracking:** Closed Phase 2 audit Item #3.
+
+---
+
+### 0c. ~~REST API has no CORS protection and binds to 0.0.0.0 by default~~ ✅ **RESOLVED** (Phase 3 entry criterion)
+
+**Issue:** `warren-web` defaulted to `--addr :8080`, i.e. `0.0.0.0:8080`, exposing the REST API on every network interface, and the HTTP handlers emitted no CORS headers at all. Any browser tab on any site could hit the API; any reachable network host could query agent state.
+
+**Impact:** SECURITY. Open API + open bind on a developer workstation that joins coffee-shop / hotel / corporate networks.
+
+**Resolution:** Batch 2 (Phase 2 audit remediation, June 2026):
+
+- Default bind is now `127.0.0.1:8080` (`web.DefaultBindAddr`), loopback only.
+- `--bind host:port` flag replaces `--addr` (which is retained with a deprecation WARN for one release).
+- `WARREN_WEB_BIND` env var supplies the default for `--bind`, mirroring `WARREN_SSH_INSECURE_HOSTKEY` from Batch 1.
+- `corsMiddleware` enforces a strict allow-list. Default origins: `http://localhost:8080`, `http://127.0.0.1:8080`. `WARREN_WEB_CORS_ORIGINS=https://app.example.com,https://...` adds extra entries.
+- Binding to anything other than a loopback address emits a one-shot WARN log mirroring the insecure-host-key WARN style, so operators grepping logs can spot exposed surfaces.
+
+**Resolved:** June 11, 2026 — commit on `feat/phase2-audit-batch2`.
+
+**Code Location:** `internal/web/server.go` (`DefaultBindAddr`, `EnvBindAddr`, `EnvCORSOrigins`, `resolveCORSOrigins`, `corsMiddleware`, `isLoopbackBind`, `originHostsForBind`); `cmd/warren-web/main.go` (`--bind` flag wiring).
+
+**Tracking:** Closed Phase 2 audit Item #4.
 
 ---
 

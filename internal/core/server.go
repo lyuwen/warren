@@ -71,36 +71,87 @@ func (c *SSHClient) Close() error {
 	return nil
 }
 
-// ConnectionPool manages SSH connections to remote servers
+// ConnectionPool manages SSH connections to remote servers.
+//
+// Get uses a double-checked-locking + per-key promise pattern so the pool's
+// main mutex is never held across the (potentially slow) SSH dial+handshake.
+// Concurrent Get calls for DIFFERENT servers proceed in parallel. Concurrent
+// Get calls for the SAME server wait on a shared in-flight promise so the
+// dial is performed exactly once per key (deduplication).
 type ConnectionPool struct {
 	mu                  sync.Mutex
 	connections         map[string]*SSHClient
+	pending             map[string]*connDial // in-flight dials, keyed by server.Name
 	timeout             time.Duration
 	insecureHostsWarned sync.Map // keyed by host:port; pool-scoped per Architect/API contract
+}
+
+// connDial represents an in-flight SSH dial. Callers that find an existing
+// entry under p.mu wait on `ready`; the goroutine that installed the entry
+// is responsible for performing the dial and closing `ready`.
+type connDial struct {
+	ready  chan struct{}
+	client *SSHClient
+	err    error
 }
 
 // NewConnectionPool creates a new connection pool
 func NewConnectionPool(timeout time.Duration) *ConnectionPool {
 	return &ConnectionPool{
 		connections: make(map[string]*SSHClient),
+		pending:     make(map[string]*connDial),
 		timeout:     timeout,
 	}
 }
 
-// Get retrieves or creates an SSH connection for the given server
+// Get retrieves or creates an SSH connection for the given server.
+//
+// The pool's main mutex is released before the SSH dial+handshake runs, so a
+// slow or failing dial against one server does not block Get calls for other
+// servers. Concurrent calls for the same server share a single in-flight
+// dial via p.pending and observe the same result.
 func (p *ConnectionPool) Get(server *Server) (*SSHClient, error) {
 	if server.IsLocal() {
 		return nil, fmt.Errorf("cannot create SSH connection for local server")
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	key := server.Name
-	if conn, exists := p.connections[key]; exists {
+
+	// Fast path + in-flight join under the lock; the dial itself is outside.
+	p.mu.Lock()
+	if conn, ok := p.connections[key]; ok {
+		p.mu.Unlock()
 		return conn, nil
 	}
+	if d, ok := p.pending[key]; ok {
+		p.mu.Unlock()
+		<-d.ready
+		return d.client, d.err
+	}
+	d := &connDial{ready: make(chan struct{})}
+	p.pending[key] = d
+	p.mu.Unlock()
 
+	// Perform the dial without holding p.mu so other servers proceed in
+	// parallel. Concurrent same-key callers wait on d.ready above.
+	client, err := p.dial(server)
+
+	p.mu.Lock()
+	delete(p.pending, key)
+	d.client = client
+	d.err = err
+	if err == nil {
+		p.connections[key] = client
+	}
+	p.mu.Unlock()
+
+	close(d.ready)
+	return client, err
+}
+
+// dial performs the SSH config build, TCP dial, and SSH handshake for a
+// remote server. It must be called with p.mu released.
+func (p *ConnectionPool) dial(server *Server) (*SSHClient, error) {
 	cfg, err := p.buildClientConfig(server, p.timeout)
 	if err != nil {
 		return nil, fmt.Errorf("build ssh config for %s: %w", server.Name, err)
@@ -125,9 +176,7 @@ func (p *ConnectionPool) Get(server *Server) (*SSHClient, error) {
 	}
 
 	client := ssh.NewClient(sshConn, chans, reqs)
-	wrapped := &SSHClient{client: client, server: server}
-	p.connections[key] = wrapped
-	return wrapped, nil
+	return &SSHClient{client: client, server: server}, nil
 }
 
 // Close closes all connections in the pool
