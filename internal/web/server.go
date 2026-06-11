@@ -5,7 +5,11 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"log"
+	"net"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/lfu/warren/internal/core"
@@ -13,6 +17,27 @@ import (
 
 //go:embed static/*
 var staticFiles embed.FS
+
+// DefaultBindAddr is the loopback-only address Warren binds by default. It
+// mirrors the SSH host-key strict-by-default posture from Batch 1: surface
+// access must be explicit rather than network-wide.
+const DefaultBindAddr = "127.0.0.1:8080"
+
+// EnvBindAddr is the environment variable override for the bind address.
+// The CLI --bind flag takes precedence over this variable.
+const EnvBindAddr = "WARREN_WEB_BIND"
+
+// EnvCORSOrigins is the environment variable override for the CORS allow-list.
+// Value is a comma-separated list of origins (e.g. "https://app.example.com").
+// Entries are added to (not replacing) the default loopback origins.
+const EnvCORSOrigins = "WARREN_WEB_CORS_ORIGINS"
+
+// defaultCORSOrigins is the strict default CORS allow-list. Only loopback
+// origins are permitted unless the operator overrides via WARREN_WEB_CORS_ORIGINS.
+var defaultCORSOrigins = []string{
+	"http://localhost:8080",
+	"http://127.0.0.1:8080",
+}
 
 // Server is the HTTP server for the Warren web interface
 type Server struct {
@@ -27,12 +52,15 @@ type Server struct {
 type Config struct {
 	Addr   string
 	Warren *core.Warren
+	// CORSOrigins, if non-nil, overrides the env-resolved allow-list. Mainly
+	// used by tests; production callers should rely on WARREN_WEB_CORS_ORIGINS.
+	CORSOrigins []string
 }
 
 // NewServer creates a new web server
 func NewServer(config *Config) *Server {
 	if config.Addr == "" {
-		config.Addr = ":8080"
+		config.Addr = DefaultBindAddr
 	}
 
 	wsHub := NewHub()
@@ -72,15 +100,120 @@ func NewServer(config *Config) *Server {
 	}
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
+	// Wrap the mux in CORS middleware. The allow-list is loopback-only by
+	// default; WARREN_WEB_CORS_ORIGINS adds extra origins (e.g. when the UI
+	// is served from a different host). If the operator bound to a non-default
+	// loopback port, expand the allow-list to include that port too so the
+	// bundled UI keeps working without extra env wiring.
+	origins := config.CORSOrigins
+	if origins == nil {
+		origins = resolveCORSOrigins(os.Getenv(EnvCORSOrigins))
+		origins = append(origins, originHostsForBind(config.Addr)...)
+	}
+	handler := corsMiddleware(origins, mux)
+
 	server.httpServer = &http.Server{
 		Addr:         config.Addr,
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
 	return server
+}
+
+// resolveCORSOrigins returns the default loopback allow-list plus any extra
+// origins supplied via WARREN_WEB_CORS_ORIGINS (comma-separated). Whitespace
+// is trimmed; empty entries are skipped.
+func resolveCORSOrigins(envValue string) []string {
+	origins := append([]string{}, defaultCORSOrigins...)
+	if envValue == "" {
+		return origins
+	}
+	for _, o := range strings.Split(envValue, ",") {
+		if trimmed := strings.TrimSpace(o); trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+	return origins
+}
+
+// corsMiddleware enforces a strict allow-list for cross-origin requests.
+//
+// Same-origin requests (no Origin header) pass through untouched. Requests
+// whose Origin appears in the allow-list receive the matching CORS headers.
+// All other cross-origin requests proceed without CORS headers — the browser
+// will block the response. CORS preflights (OPTIONS) from in-policy origins
+// short-circuit with 204 No Content.
+func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		allowed[o] = struct{}{}
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			if _, ok := allowed[origin]; ok {
+				h := w.Header()
+				h.Set("Access-Control-Allow-Origin", origin)
+				h.Set("Vary", "Origin")
+				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				h.Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			}
+		}
+		if r.Method == http.MethodOptions {
+			// Preflight: respond 204 only when in-policy (Allow-Origin set).
+			// Out-of-policy preflights fall through to next so the handler's
+			// usual method-not-allowed response is preserved.
+			if w.Header().Get("Access-Control-Allow-Origin") != "" {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isLoopbackBind reports whether addr binds exclusively to a loopback
+// interface. Empty host (":8080"), "0.0.0.0", and any non-loopback address
+// return false so the caller can warn appropriately.
+func isLoopbackBind(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// If we can't parse it, treat as non-loopback to err on the safe
+		// side of WARNing.
+		return false
+	}
+	if host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback()
+}
+
+// originHostsForBind returns the loopback-style origins implied by a custom
+// bind port — used by NewServer to keep the default CORS allow-list useful
+// when the operator binds to a non-default loopback port.
+func originHostsForBind(addr string) []string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" || port == "8080" {
+		return nil
+	}
+	// Only auto-expand for loopback binds; non-loopback callers must opt in
+	// via WARREN_WEB_CORS_ORIGINS explicitly.
+	switch host {
+	case "localhost", "127.0.0.1", "::1":
+		return []string{"http://localhost:" + port, "http://127.0.0.1:" + port}
+	default:
+		return nil
+	}
 }
 
 // Start starts the web server and WebSocket hub
@@ -90,6 +223,13 @@ func (s *Server) Start() error {
 
 	// Start state change monitor
 	go s.monitorStateChanges()
+
+	// WARN if the operator opted out of loopback-only binding — this exposes
+	// the REST API on all matching network interfaces and relies entirely on
+	// the CORS allow-list and network reachability for protection.
+	if !isLoopbackBind(s.addr) {
+		log.Printf("WARN: warren-web bound to non-loopback address %q; REST API is reachable from the network. Ensure WARREN_WEB_CORS_ORIGINS is set and any reverse-proxy auth is in place.", s.addr)
+	}
 
 	// Start HTTP server
 	go func() {
