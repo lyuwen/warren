@@ -200,10 +200,18 @@ func isLoopbackBind(addr string) bool {
 
 // originHostsForBind returns the loopback-style origins implied by a custom
 // bind port — used by NewServer to keep the default CORS allow-list useful
-// when the operator binds to a non-default loopback port.
+// when the operator binds to a non-default loopback port. Returns nil for
+// the default port (already covered by defaultCORSOrigins) and for any
+// non-loopback host (operator must opt in via WARREN_WEB_CORS_ORIGINS).
 func originHostsForBind(addr string) []string {
 	host, port, err := net.SplitHostPort(addr)
-	if err != nil || port == "" || port == "8080" {
+	if err != nil || port == "" {
+		return nil
+	}
+	// Skip when the bind port matches the default — defaultCORSOrigins
+	// already covers it. Derive the default port from DefaultBindAddr so a
+	// future change to that constant doesn't leave this early-out stale.
+	if _, defaultPort, derr := net.SplitHostPort(DefaultBindAddr); derr == nil && port == defaultPort {
 		return nil
 	}
 	// Only auto-expand for loopback binds; non-loopback callers must opt in
