@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -388,5 +389,98 @@ func TestResolveCORSOrigins(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestOriginHostsForBind locks in the auto-expand helper that keeps the
+// default CORS allow-list useful when an operator binds to a non-default
+// loopback port (e.g. --bind 127.0.0.1:8090). The default port short-
+// circuits via DefaultBindAddr so a future change to that constant does
+// not leave a stale magic-string in this helper (per the 6bcd4da follow-up).
+//
+// Non-loopback binds MUST return nil so operators are forced to opt in
+// via WARREN_WEB_CORS_ORIGINS — silently auto-expanding for 0.0.0.0
+// would silently widen the CORS surface.
+func TestOriginHostsForBind(t *testing.T) {
+	cases := []struct {
+		name string
+		addr string
+		want []string
+	}{
+		{
+			name: "default loopback port short-circuits",
+			addr: "127.0.0.1:8080",
+			want: nil,
+		},
+		{
+			name: "default loopback port via localhost short-circuits",
+			addr: "localhost:8080",
+			want: nil,
+		},
+		{
+			name: "non-default loopback port auto-expands ipv4",
+			addr: "127.0.0.1:8090",
+			want: []string{"http://localhost:8090", "http://127.0.0.1:8090"},
+		},
+		{
+			name: "non-default loopback port auto-expands via localhost",
+			addr: "localhost:9000",
+			want: []string{"http://localhost:9000", "http://127.0.0.1:9000"},
+		},
+		{
+			name: "non-default loopback port auto-expands ipv6 [::1]",
+			addr: "[::1]:8090",
+			want: []string{"http://localhost:8090", "http://127.0.0.1:8090"},
+		},
+		{
+			name: "non-loopback bind returns nil (must opt in via env)",
+			addr: "0.0.0.0:8090",
+			want: nil,
+		},
+		{
+			name: "private LAN bind returns nil",
+			addr: "192.168.1.10:8090",
+			want: nil,
+		},
+		{
+			name: "empty host (all interfaces) returns nil",
+			addr: ":8090",
+			want: nil,
+		},
+		{
+			name: "malformed addr returns nil",
+			addr: "not a host:port",
+			want: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := originHostsForBind(tc.addr)
+			if len(got) != len(tc.want) {
+				t.Fatalf("originHostsForBind(%q) = %v (len %d), want %v (len %d)", tc.addr, got, len(got), tc.want, len(tc.want))
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("entry %d: got %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestOriginHostsForBind_TracksDefaultConstant locks in the 6bcd4da
+// refactor: the "skip if port matches default" early-out derives the
+// default port from DefaultBindAddr rather than hardcoding "8080". This
+// test pins the invariant that the default port (whatever it is) is
+// covered by defaultCORSOrigins and does not get duplicated into the
+// auto-expansion.
+func TestOriginHostsForBind_TracksDefaultConstant(t *testing.T) {
+	_, defaultPort, err := net.SplitHostPort(DefaultBindAddr)
+	if err != nil {
+		t.Fatalf("DefaultBindAddr (%q) is malformed: %v", DefaultBindAddr, err)
+	}
+	got := originHostsForBind("127.0.0.1:" + defaultPort)
+	if got != nil {
+		t.Fatalf("originHostsForBind on default port %q must short-circuit (nil); got %v — would duplicate the default loopback origin", defaultPort, got)
 	}
 }

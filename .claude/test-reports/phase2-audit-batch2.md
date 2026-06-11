@@ -1,7 +1,7 @@
 # Testing Report — Phase 2 Audit Batch 2
 
 **Branch:** `test/phase2-audit-batch2`
-**Implementer commit:** `73a6696` on `feat/phase2-audit-batch2`
+**Implementer commits:** `73a6696` + `6bcd4da` on `feat/phase2-audit-batch2` (merged into the test branch before adding test commits)
 **Date:** 2026-06-11
 **Tester:** tester (dev-team-warren-v2)
 
@@ -17,7 +17,8 @@ Production code is the Implementer's responsibility — only test files were add
 ## Files Added
 
 - `internal/core/server_pool_test.go` — 4 tests for Item #3.
-- `internal/web/server_test.go` — 9 tests (5 top-level functions, 4 with subtests) for Item #4.
+- `internal/core/cmd_warren_web_addr_deprecation_test.go` — 2 cmd-level tests for the `--addr` deprecation WARN added per Architect follow-up.
+- `internal/web/server_test.go` — 9 CORS/bind tests + 2 `originHostsForBind` tests (1 table-driven, 1 default-constant invariant), several with subtests, for Item #4.
 
 No production files modified. No tests deleted or renamed.
 
@@ -52,6 +53,17 @@ Tests target the public package surface (`DefaultBindAddr`, `EnvBindAddr`, `EnvC
 | `TestWebServer_NonLoopbackBind_LogsWarning` | 4 subtests: `127.0.0.1:0` and `localhost:0` produce no WARN; `0.0.0.0:0` and `:0` produce a `WARN ... non-loopback ...` log line. Captures via `log.SetOutput`. Server is `Stop`ed immediately so no listener is left running. |
 | `TestIsLoopbackBind_TableDriven` | 8 cases pin the loopback classifier: `127.0.0.1`, `localhost`, `[::1]` → true; `0.0.0.0`, `:8080`, `192.168.1.10`, malformed input → false. Locks in the predicate the WARN gate depends on. |
 | `TestResolveCORSOrigins` | 4 cases for env parsing: empty, single, multiple-with-whitespace, empty-entries-skipped. Defaults are always preserved (append, not replace). |
+| `TestOriginHostsForBind` | 9 cases for the auto-expand helper: default port short-circuits to nil (via `127.0.0.1` and `localhost`); `127.0.0.1:8090`, `localhost:9000`, and `[::1]:8090` auto-expand to `http://localhost:<port>` + `http://127.0.0.1:<port>`; non-loopback (`0.0.0.0`, `192.168.x`, empty host) and malformed input all return nil so operators are forced to opt in via `WARREN_WEB_CORS_ORIGINS`. |
+| `TestOriginHostsForBind_TracksDefaultConstant` | Locks in the `6bcd4da` refactor: the default-port early-out derives from `DefaultBindAddr` rather than a magic `"8080"` string, so a future port change cannot leave the helper duplicating default-port entries into the auto-expansion. |
+
+### Cmd-level — `--addr` deprecation WARN (`internal/core/cmd_warren_web_addr_deprecation_test.go`)
+
+The Implementer retained `--addr` as a deprecated alias for `--bind` so existing scripts don't break. The deprecation WARN lives in `cmd/warren-web/main.go` (package `main`, no test package), so we exec the built binary and observe stderr — mirroring the `cmd_legacy_db_test.go` pattern from Batch 1. A `safeBuffer` (`bytes.Buffer` + `sync.Mutex`) is used so the child process's stderr-copying goroutine and the test's polling reads do not trip `-race`.
+
+| Test | What it locks in |
+| --- | --- |
+| `TestCmd_WarrenWeb_AddrDeprecationWarning` | Running `warren-web -addr 127.0.0.1:0` (without `--bind`) emits the `WARN: --addr is deprecated; use --bind. Honoring --addr=127.0.0.1:0` line to stderr. Three assertions: the literal `--addr is deprecated` substring, the `WARN` prefix, and the echoed `--addr` value. |
+| `TestCmd_WarrenWeb_BindFlagSilencesAddrDeprecation` | Running with BOTH `-addr` and `-bind` set silences the deprecation WARN — pins the `addrSet && !bindSet` branch so an over-eager refactor doesn't start warning even after the user has migrated. |
 
 ## Test Run
 
@@ -73,12 +85,12 @@ ok  	github.com/lfu/warren/internal/web	1.106s
 ```
 
 ### Summary
-- **Total tests added:** 13 top-level (`TestConnectionPool_*` × 4, `TestWebServer_*` × 7, `TestIsLoopbackBind_TableDriven`, `TestResolveCORSOrigins`).
-- **Subtests:** 5 allowed/denied CORS origin cases, 4 WARN-log bind cases, 8 loopback-classifier cases, 4 env-parser cases.
-- **Effective assertion count:** 30+ subtest invocations.
+- **Total tests added:** 17 top-level (`TestConnectionPool_*` × 4, `TestWebServer_*` × 7, `TestIsLoopbackBind_TableDriven`, `TestResolveCORSOrigins`, `TestOriginHostsForBind`, `TestOriginHostsForBind_TracksDefaultConstant`, `TestCmd_WarrenWeb_AddrDeprecationWarning`, `TestCmd_WarrenWeb_BindFlagSilencesAddrDeprecation`).
+- **Subtests:** 5 allowed/denied CORS origin cases, 4 WARN-log bind cases, 8 loopback-classifier cases, 4 env-parser cases, 9 `originHostsForBind` cases.
+- **Effective assertion count:** 40+ subtest invocations.
 - **Passed:** all.
 - **Failed:** 0.
-- **Skipped:** `TestConnectionPool_HostKeyCheckStillHonored` will skip if `ssh-keygen` is unavailable (CI hardening — matches the existing `TestConnectionPool_Get_EarlyReturnsBeforeDialWhenHostKeyUnavailable` in `hostkey_test.go`).
+- **Skipped:** `TestConnectionPool_HostKeyCheckStillHonored` will skip if `ssh-keygen` is unavailable (CI hardening — matches the existing `TestConnectionPool_Get_EarlyReturnsBeforeDialWhenHostKeyUnavailable` in `hostkey_test.go`). Cmd-level tests skip if the Go toolchain isn't on `PATH` (matches `cmd_legacy_db_test.go`).
 - **Race detector:** clean across `./internal/core/...` and `./internal/web/...`.
 
 ### Coverage
@@ -92,8 +104,10 @@ ok  	github.com/lfu/warren/internal/web	1.106s
   - `corsMiddleware` — covered for: no-Origin pass-through, allowed origin (loopback + env-supplied), denied origin, in-policy preflight short-circuit.
   - `resolveCORSOrigins` — covered.
   - `isLoopbackBind` — covered.
-  - `originHostsForBind` — covered transitively via `NewServer`.
+  - `originHostsForBind` — covered directly via `TestOriginHostsForBind` (9 cases) and `TestOriginHostsForBind_TracksDefaultConstant` (constant-tracking invariant).
   - `Server.Start` WARN log — covered for loopback (no-WARN) and non-loopback (WARN-emitted).
+- `cmd/warren-web/main.go`:
+  - `--addr` deprecation WARN — covered (emitted when `-addr` alone, silenced when both flags set).
 
 ## Coverage Gaps / Suggestions
 
@@ -101,9 +115,7 @@ These are not regressions for Batch 2 but are worth tracking as future work:
 
 1. **`Server.Start` HTTP error path:** the goroutine that calls `ListenAndServe` only logs to stdout via `fmt.Printf` if a non-`ErrServerClosed` error fires. There is no integration test that exercises a real bind failure (e.g. port in use). Low priority; the path is straightforward.
 2. **CORS allow-list case-sensitivity:** the middleware compares Origins exactly. Browsers always send Origins in canonical lowercase, but a future proxy stripping/rewriting Origin would slip past silently. Not a Batch 2 concern.
-3. **`originHostsForBind` non-default loopback port:** I cover it transitively via `NewServer`, but a focused unit test (`originHostsForBind("127.0.0.1:9090")` returns the auto-expanded `localhost:9090` + `127.0.0.1:9090` entries) would lock in the helper directly. Optional; can add if Reviewer wants explicit coverage.
-4. **WARN log is one-shot per process:** the implementer's WARN fires inline from `Start()`, so a process that calls `Start` once gets one WARN. If `Start` is ever called multiple times (it currently is not), the WARN would repeat. No dedup test needed today.
-5. **`--addr` deprecation WARN:** the cmd-layer deprecation log lives in `cmd/warren-web/main.go` and has no test package. Out of scope for Batch 2 since the audit's acceptance criteria focused on the `--bind` / env-var path; if Reviewer wants cmd-level coverage, a `cmd_warren_web_test.go` in the style of `cmd_legacy_db_test.go` would be the right shape.
+3. **WARN log is one-shot per process:** the implementer's WARN fires inline from `Start()`, so a process that calls `Start` once gets one WARN. If `Start` is ever called multiple times (it currently is not), the WARN would repeat. No dedup test needed today.
 
 ## Concerns / Observations
 
@@ -116,4 +128,4 @@ These are not regressions for Batch 2 but are worth tracking as future work:
 
 ## Ready for Review
 
-Tests committed on `test/phase2-audit-batch2`. All 13 new top-level tests pass with `-race` alongside the full Batch 1 + Batch 2 implementation. No production code modified.
+Tests committed on `test/phase2-audit-batch2`. All 17 new top-level tests pass with `-race` alongside the full Batch 1 + Batch 2 implementation. No production code modified.
