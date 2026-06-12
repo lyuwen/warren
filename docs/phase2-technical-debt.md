@@ -36,6 +36,60 @@ This document tracks known issues, limitations, and technical debt from Phase 2.
 
 ---
 
+### 0d. ~~State transitions dropped for 4/9 states~~ ✅ **RESOLVED** (Audit Item #5)
+
+**Issue:** `AppendStateChange` was called only inside `notifications.Engine.ProcessStateChange`, gated on `shouldNotify`. Transitions into `idle`, `thinking`, `executing`, `unknown` were silently dropped from the event store — completely. In practice, given how often executing/thinking dominate active sessions, roughly two-thirds of observed transitions never reached the events table. Additionally, the consecutive-error → `StateError` path in `core/warren.handlePollError` mutated `session.CurrentState` directly without persisting any event.
+
+**Impact:** Audit-trail integrity. Any UI or replay tool that reconstructed session history from the event store saw a sparse, misleading timeline.
+
+**Resolution:** Batch 3a (June 12, 2026) extracted a `Warren.transitionTo(agentID, newState, reason, confidence)` helper. It is now the ONLY writer of `session.CurrentState` outside session construction, called by both the success poll path and the consecutive-error path. The helper persists EVERY accepted transition to the event store and forwards notify-worthy transitions to `notifications.Engine.ProcessStateChange` (which has had its `AppendStateChange` call removed — it now writes notifications only).
+
+Anti-flap debounce: `transitionTo` rejects an `A → B` transition if the previous transition was `B → A` within the last 2 seconds (~4 poll cycles at 500ms). Combined with the existing 10-second `active → idle` debounce, this prevents the events table from filling with flicker noise during long tool calls. `MonitoredSession` gained `PrevState` / `PrevTransitionTime` fields to support the debounce.
+
+Reason-field semantics: notify-worthy transitions carry `"notification: <trigger>"`; non-notify transitions carry `"state detection (confidence X.XX)"`; consecutive-error transitions carry `"consecutive poll errors: N"`. Self-describing timeline.
+
+Retention reuses the existing 30-day pruning job — no state-change-specific policy.
+
+**Resolved:** June 12, 2026 — commit on `feat/phase2-audit-batch3a`.
+
+**Code Location:** `internal/core/warren.go` (`transitionTo`, `transitionReason`, `notifyWorthyTrigger`, `MonitoredSession.PrevState/PrevTransitionTime`); `internal/notifications/engine.go` (`ProcessStateChange` no longer writes state events).
+
+**Tracking:** Closed Phase 2 audit Item #5.
+
+---
+
+### 0e. ~~Parser/state pattern divergence~~ ✅ **RESOLVED** (Audit Item #19)
+
+**Issue:** `internal/parser/activity.go` and `internal/state/detector.go` each owned their own regex tables for matching Claude Code tool invocations. They diverged: parser's `toolExtractors` lacked `NotebookEdit`, so a `● NotebookEdit(...)` line was emitted as a chat-assistant fallback while state correctly read it as `StateExecuting`. The "executing" view of a session disagreed with the "what just happened" view.
+
+**Impact:** Data integrity. Any consumer joining state-change events to activity events for the same line saw inconsistent classification.
+
+**Resolution:** Batch 3a established a canonical shared vocabulary (`internal/types/tools.go`: `CanonicalToolNames`, `CanonicalFileOps`) and a contract test (`internal/types/contract_test.go` — Tester's deliverable) asserting that BOTH packages produce typed events / signals for every entry. `NotebookEdit` was added to parser's `toolExtractors` as the concrete fix. The two regex tables remain separate (parser cares about activity-event shape, state cares about state-signal shape — they need different anchoring and precedence).
+
+**Resolved:** June 12, 2026 — commit on `feat/phase2-audit-batch3a`.
+
+**Code Location:** `internal/types/tools.go`, `internal/parser/activity.go` (toolExtractors with NotebookEdit + tier), `internal/state/detector.go` (reToolCall already included NotebookEdit).
+
+**Tracking:** Closed Phase 2 audit Item #19.
+
+---
+
+### 0f. ~~Per-event confidence missing; hand-coded strength drift~~ ✅ **RESOLVED** (Audit Item #22)
+
+**Issue:** Both packages hand-coded `Strength: 0.95 / 0.85 / 0.70 / 0.60` numeric values at every regex match site. The values diverged between parser and state for equivalent evidence. Aggregate `ParseResult.Confidence` was a fixed-shape heuristic (`0.8` or `0.95` based on type count) that ignored which patterns actually matched. `events.AgentActivityEvent` and `events.StateChangeEvent` carried no confidence field at all.
+
+**Impact:** UI consumers had no way to express "how strongly does Warren believe this event happened?" Downstream filtering by confidence threshold was impossible.
+
+**Resolution:** Batch 3a introduced four tier constants in `internal/types/confidence.go` (`ConfAnchoredExact = 0.95`, `ConfAnchoredFuzzy = 0.85`, `ConfCaseProse = 0.65`, `ConfSubstringKey = 0.50`). Every `regexp.MustCompile` site in parser and state is annotated with its tier, and the previously hand-coded `Strength:` numbers are replaced with tier constants. Aggregate `ParseResult.Confidence` is now the mean of per-event confidences. JSON-additive `Confidence float64 \`json:"confidence,omitempty"\`` was added to `events.AgentActivityEvent` and `events.StateChangeEvent` — no schema migration, old events deserialize with `Confidence == 0.0` ("unscored / legacy," documented in the field comment).
+
+**Resolved:** June 12, 2026 — commit on `feat/phase2-audit-batch3a`.
+
+**Code Location:** `internal/types/confidence.go`, `internal/parser/activity.go` (tieredRegex + per-extractor tier), `internal/state/detector.go` (every Signal carries a tier constant), `internal/events/store.go` (Confidence field on Activity + StateChange events).
+
+**Tracking:** Closed Phase 2 audit Item #22.
+
+---
+
 ### 0a-followup. Per-server `insecure_host_key` config field (P1 — Phase 3 entry-criterion follow-up)
 
 **Issue:** The Batch 1 fix for 0a routes the insecure-fallback opt-in through a binary-global env var (`WARREN_SSH_INSECURE_HOSTKEY=1`). That conflates "every SSH connection in this process is insecure" with "this one dev VM has no known_hosts entry" — an operator who needs the latter is forced to take the former and inherit MITM exposure on every other host in the same Warren process.

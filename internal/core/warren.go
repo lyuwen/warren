@@ -48,19 +48,27 @@ type Warren struct {
 	wg     sync.WaitGroup
 }
 
-// MonitoredSession represents an agent session being monitored
+// MonitoredSession represents an agent session being monitored.
+//
+// `PrevState` / `PrevTransitionTime` are used by the anti-flap debounce in
+// `Warren.transitionTo` (Phase 2 audit Item #5): a transition `A → B` is
+// rejected if the previous transition was `B → A` within the last 2
+// seconds. This prevents `executing↔thinking` spam during a long tool call
+// where partial captures briefly drop the spinner.
 type MonitoredSession struct {
-	AgentID           string
-	PaneID            string
-	CurrentState      AgentState
-	LastPollTime      time.Time
-	LastContent       string
-	ErrorCount        int
-	ConsecutiveErrors int
-	ServerName        string
-	WorkingDir        string
-	LastStateChange   time.Time
-	TmuxClient        *tmux.Client // Per-session tmux client (local or remote)
+	AgentID            string
+	PaneID             string
+	CurrentState       AgentState
+	LastPollTime       time.Time
+	LastContent        string
+	ErrorCount         int
+	ConsecutiveErrors  int
+	ServerName         string
+	WorkingDir         string
+	LastStateChange    time.Time
+	PrevState          AgentState   // state immediately before CurrentState; populated by transitionTo
+	PrevTransitionTime time.Time    // when the CurrentState transition occurred (i.e., when PrevState→CurrentState happened)
+	TmuxClient         *tmux.Client // Per-session tmux client (local or remote)
 }
 
 // Config configures Warren behavior
@@ -377,22 +385,22 @@ func (w *Warren) pollSession(agentID string) error {
 	}
 
 	if shouldTransition {
-		oldState := session.CurrentState
-		newState := detectionResult.State
-
-		// Update session state
+		// Build the reason string based on whether the target state is
+		// notify-worthy. See Item #5-D (planval): the previous "State
+		// transition triggered <X> notification" phrasing overclaimed for
+		// non-notify targets; persist-all-transitions requires accurate
+		// per-transition reasons.
+		reason := w.transitionReason(detectionResult)
+		if err := w.transitionTo(agentID, detectionResult.State, reason, detectionResult.Confidence); err != nil {
+			return fmt.Errorf("failed to record state transition: %w", err)
+		}
+		// transitionTo updates CurrentState/LastStateChange; we still need
+		// to refresh LastContent/LastPollTime/ConsecutiveErrors.
 		w.mu.Lock()
-		session.CurrentState = newState
 		session.LastContent = captureResult.Content
 		session.LastPollTime = time.Now()
-		session.LastStateChange = time.Now()
 		session.ConsecutiveErrors = 0
 		w.mu.Unlock()
-
-		// Process state change through notification engine (convert to string)
-		if err := w.notifEngine.ProcessStateChange(agentID, string(oldState), string(newState)); err != nil {
-			return fmt.Errorf("failed to process state change: %w", err)
-		}
 	} else {
 		// No state transition, just update metadata
 		w.mu.Lock()
@@ -405,25 +413,138 @@ func (w *Warren) pollSession(agentID string) error {
 	return nil
 }
 
-// handlePollError handles errors during polling
+// handlePollError handles errors during polling.
+//
+// After ≥10 consecutive errors, the session transitions to StateError via
+// the same `transitionTo` helper used by the success path — so the error
+// transition is persisted as a state-change event with reason
+// "consecutive poll errors: N" (Item #5-C, #5-D from the planval brief).
+// Phase 2 Item #5 fixed the bug where this path mutated `CurrentState`
+// directly and dropped the transition entirely from the events table.
 func (w *Warren) handlePollError(agentID string, err error) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-
 	session, exists := w.sessions[agentID]
 	if !exists {
+		w.mu.Unlock()
 		return
 	}
 
 	session.ErrorCount++
 	session.ConsecutiveErrors++
+	consecutive := session.ConsecutiveErrors
+	currentState := session.CurrentState
+	w.mu.Unlock()
 
 	// After many consecutive errors, mark session as error state.
 	// This is recoverable — a successful poll will clear it.
-	// Don't fire a notification — poll failures are infrastructure
-	// issues (SSH drops), not actionable agent errors.
-	if session.ConsecutiveErrors >= 10 {
-		session.CurrentState = StateError
+	// We avoid duplicate transitions if we're already in StateError.
+	if consecutive >= 10 && currentState != StateError {
+		reason := fmt.Sprintf("consecutive poll errors: %d", consecutive)
+		// confidence 1.0: the error state is observed directly (we counted
+		// the poll failures), not inferred from a regex tier.
+		_ = w.transitionTo(agentID, StateError, reason, 1.0)
+	}
+}
+
+// transitionReason builds the Reason field stored on the StateChangeEvent
+// for transitions detected from content/activities (Item #5-D).
+//
+// Notify-worthy targets carry "notification: <trigger>" so the audit
+// trail self-describes the user-visible side effect. Non-notify targets
+// carry "state detection (confidence X.XX)" so timeline consumers can
+// distinguish "Warren saw a transition the user wouldn't be paged for"
+// from "Warren sent a notification."
+func (w *Warren) transitionReason(detection *state.DetectionResult) string {
+	if trigger, notifyWorthy := notifyWorthyTrigger(detection.State); notifyWorthy {
+		return fmt.Sprintf("notification: %s", trigger)
+	}
+	return fmt.Sprintf("state detection (confidence %.2f)", detection.Confidence)
+}
+
+// transitionTo is the ONLY writer of `session.CurrentState` outside session
+// construction (Item #5-C). It enforces the anti-flap debounce, persists
+// EVERY accepted transition to the event store (not just notify-worthy
+// ones — the bug behind Item #5), and forwards notify-worthy transitions
+// to the notification engine.
+//
+// Returns nil even when a transition is dropped by debounce so callers can
+// treat "no-op" the same as "applied." Returns a non-nil error only when
+// event-store persistence fails.
+func (w *Warren) transitionTo(agentID string, newState AgentState, reason string, confidence float64) error {
+	w.mu.Lock()
+	session, exists := w.sessions[agentID]
+	if !exists {
+		w.mu.Unlock()
+		return fmt.Errorf("session %s not found", agentID)
+	}
+	oldState := session.CurrentState
+	if oldState == newState {
+		w.mu.Unlock()
+		return nil
+	}
+	// Anti-flap debounce (Item #5-B): reject A→B if previous transition
+	// was B→A within the last 2 seconds. At 500ms poll cadence this
+	// corresponds to 4 consecutive poll cycles of evidence — enough to
+	// distinguish a real switch from a flicker between captures.
+	if session.PrevState == newState && time.Since(session.PrevTransitionTime) < 2*time.Second {
+		w.mu.Unlock()
+		return nil
+	}
+	now := time.Now()
+	session.PrevState = oldState
+	session.PrevTransitionTime = now
+	session.CurrentState = newState
+	session.LastStateChange = now
+	w.mu.Unlock()
+
+	// Persist the state-change event for EVERY accepted transition. This
+	// is the core of Item #5 — previously this lived in
+	// notifications.Engine.ProcessStateChange and only fired for the 5/9
+	// notify-worthy states.
+	stateChange := &events.StateChangeEvent{
+		AgentID:    agentID,
+		FromState:  string(oldState),
+		ToState:    string(newState),
+		Reason:     reason,
+		Timestamp:  now,
+		Confidence: confidence,
+	}
+	if err := w.eventStore.AppendStateChange(stateChange); err != nil {
+		return fmt.Errorf("failed to append state change: %w", err)
+	}
+
+	// Forward notify-worthy transitions to the notification engine. The
+	// engine's own AppendStateChange call has been removed — see
+	// notifications/engine.go.
+	if _, notifyWorthy := notifyWorthyTrigger(newState); notifyWorthy {
+		if err := w.notifEngine.ProcessStateChange(agentID, string(oldState), string(newState)); err != nil {
+			// Log via return rather than panic; the state change is
+			// already persisted, so the audit trail is intact.
+			return fmt.Errorf("failed to process state change notification: %w", err)
+		}
+	}
+	return nil
+}
+
+// notifyWorthyTrigger returns the notification trigger string for states
+// that should generate a user-visible notification, and `(_, false)` for
+// states that are persisted but silent (idle/thinking/executing/unknown).
+// Mirrors `notifications.Engine.shouldNotify` — kept here to decouple
+// `transitionReason` and `transitionTo` from the engine's internal API.
+func notifyWorthyTrigger(s AgentState) (string, bool) {
+	switch s {
+	case StateWaitingPermission:
+		return "permission_required", true
+	case StateAskingQuestion:
+		return "question_asked", true
+	case StateFinished:
+		return "finished", true
+	case StateError:
+		return "error", true
+	case StateStopped:
+		return "stopped", true
+	default:
+		return "", false
 	}
 }
 

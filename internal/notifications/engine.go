@@ -49,7 +49,15 @@ func NewEngine(store *events.Store) *Engine {
 	return e
 }
 
-// ProcessStateChange checks if a state transition should trigger a notification
+// ProcessStateChange checks if a state transition should trigger a
+// notification, and creates one if so.
+//
+// As of Phase 2 audit Item #5, this method NO LONGER persists a
+// `StateChangeEvent`. The state-change event is persisted by
+// `core.Warren.transitionTo` for EVERY accepted transition (not just the
+// 5/9 notify-worthy ones). This method now only owns the notification
+// pipeline: build a `NotificationEvent`, persist it, and emit it on the
+// real-time channel.
 func (e *Engine) ProcessStateChange(agentID string, fromState, toState string) error {
 	e.mu.Lock()
 	prevState := e.lastKnownStates[agentID]
@@ -90,19 +98,6 @@ func (e *Engine) ProcessStateChange(agentID string, fromState, toState string) e
 	case e.notificationChan <- notification:
 	default:
 		// Channel full, skip (notification is still in DB)
-	}
-
-	// Store state change event
-	stateChange := &events.StateChangeEvent{
-		AgentID:   agentID,
-		FromState: fromState,
-		ToState:   toState,
-		Reason:    fmt.Sprintf("State transition triggered %s notification", trigger),
-		Timestamp: time.Now(),
-	}
-
-	if err := e.store.AppendStateChange(stateChange); err != nil {
-		return fmt.Errorf("failed to store state change: %w", err)
 	}
 
 	return nil
