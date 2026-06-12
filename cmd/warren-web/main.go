@@ -15,13 +15,39 @@ import (
 )
 
 func main() {
+	// Resolve the default bind address. CLI --bind flag wins; otherwise
+	// WARREN_WEB_BIND env (mirrors WARREN_SSH_INSECURE_HOSTKEY pattern from
+	// Batch 1); otherwise the loopback-only default.
+	defaultBind := web.DefaultBindAddr
+	if env := os.Getenv(web.EnvBindAddr); env != "" {
+		defaultBind = env
+	}
+
 	// Parse command-line flags. -db defaults to core.DefaultDBPath() so the
 	// --help text shows the resolved canonical path under $HOME/.warren.
-	addr := flag.String("addr", ":8080", "HTTP server address")
+	bind := flag.String("bind", defaultBind, "HTTP bind address (host:port). Defaults to "+web.DefaultBindAddr+" (loopback only); set "+web.EnvBindAddr+" or --bind 0.0.0.0:8080 to expose on the network")
+	addr := flag.String("addr", "", "DEPRECATED: use --bind. Retained for backwards compatibility")
 	dbPath := flag.String("db", core.DefaultDBPath(), "Database path")
 	pollInterval := flag.Duration("poll", 500*time.Millisecond, "Polling interval")
 	minConfidence := flag.Float64("confidence", 0.7, "Minimum confidence for state transitions")
 	flag.Parse()
+
+	// --addr is the legacy flag. If the operator passed --addr but not --bind,
+	// honor it; otherwise --bind wins.
+	bindAddr := *bind
+	addrSet, bindSet := false, false
+	flag.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "addr":
+			addrSet = true
+		case "bind":
+			bindSet = true
+		}
+	})
+	if addrSet && !bindSet {
+		log.Printf("WARN: --addr is deprecated; use --bind. Honoring --addr=%q for now.", *addr)
+		bindAddr = *addr
+	}
 
 	// Detect whether the user explicitly passed -db via flag.Visit. We do
 	// NOT compare *dbPath to core.DefaultDBPath() — a user who legitimately
@@ -76,7 +102,7 @@ func main() {
 
 	// Create and start web server
 	webConfig := &web.Config{
-		Addr:   *addr,
+		Addr:   bindAddr,
 		Warren: warren,
 	}
 
@@ -85,7 +111,7 @@ func main() {
 		log.Fatalf("Failed to start web server: %v", err)
 	}
 
-	log.Printf("Warren web interface available at http://localhost%s", *addr)
+	log.Printf("Warren web interface available at http://%s", bindAddr)
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)
