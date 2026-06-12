@@ -184,7 +184,10 @@ func TestActivityParser_Confidence(t *testing.T) {
 User: Hello
 Assistant: Hi
 `,
-			minConf:     0.7,
+			// Chat-only content emits chat events at the substring-keyword
+			// tier (ConfSubstringKey = 0.50). Aggregate ParseResult.Confidence
+			// is the mean of per-event confidences (Batch 3a Item #22).
+			minConf:     0.5,
 			expectTypes: 1,
 		},
 		{
@@ -195,7 +198,10 @@ Reading file: test.go
 Executing command: go test
 Which approach should I use?
 `,
-			minConf:     0.9,
+			// Mixed legacy prose: chat (0.50) + file ops prose (ConfCaseProse
+			// 0.65) + tool prose (ConfCaseProse 0.65) + anchored-fuzzy
+			// question (0.85) — the per-event mean lands in the 0.6 range.
+			minConf:     0.6,
 			expectTypes: 3,
 		},
 	}

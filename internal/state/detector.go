@@ -11,56 +11,68 @@ import (
 )
 
 // Real Claude Code v2.1.x UI patterns compiled once at package level.
+//
+// Each pattern is annotated with the confidence tier (from
+// internal/types/confidence.go) that the matching signal will carry. The
+// tier is the un-decayed regex-tier score; time-decay (see determineState)
+// is applied on top of it at scoring time.
 var (
 	// Spinner patterns: ✢ Fluttering… / ✢ Churning… / ✢ Thinking… etc.
-	// These indicate an actively running agent.
+	// These indicate an actively running agent. Tier: anchored-exact.
 	reSpinner = regexp.MustCompile(`✢\s+\S+…`)
 
 	// Completion timer: ✻ Worked for 7m 23s / ✻ Brewed for 1m 58s / ✻ Churned for 31s
+	// Tier: anchored-exact (✻ + "for" + duration is a unique UI element).
 	reCompletionTimer = regexp.MustCompile(`✻\s+\S+\s+for\s+[\dm]+\s*[\ds]*`)
 
-	// Recap line: ※ recap: ...
+	// Recap line: ※ recap: ...  Tier: anchored-fuzzy.
 	reRecap = regexp.MustCompile(`※\s+recap:`)
 
 	// Tool invocations: ● Bash(...) / ● Read(...) / ● Edit(...) / ● Write(...)
-	// ● Skill(...) / ● Agent(...)
+	// ● Skill(...) / ● Agent(...). Tier: anchored-exact.
 	reToolCall = regexp.MustCompile(`●\s+(Bash|Read|Edit|Write|Skill|Agent|LSP|WebSearch|WebFetch|Grep|Glob|NotebookEdit)\(`)
 
-	// Tool result: ⎿  (indented result from a tool)
+	// Tool result: ⎿  (indented result from a tool). Tier: anchored-fuzzy.
 	reToolResult = regexp.MustCompile(`⎿\s+`)
 
 	// Status bar model info: Opus 4.6 (1M context) or Sonnet 4.6 etc.
+	// Tier: anchored-exact.
 	reStatusBar = regexp.MustCompile(`(Opus|Sonnet|Haiku)\s+[\d.]+\s+\([\dMk]+\s+context\)`)
 
-	// Status bar progress: ░ or █ progress bars with percentage
+	// Status bar progress: ░ or █ progress bars with percentage.
+	// Tier: anchored-fuzzy.
 	reProgressBar = regexp.MustCompile(`[░█]+\s+\d+%`)
 
-	// Permission prompt: "Esc to cancel" or "Tab to amend" at the end
+	// Permission prompt: "Esc to cancel" or "Tab to amend" at the end.
+	// Tier: anchored-exact.
 	rePermissionFooter = regexp.MustCompile(`Esc to cancel\s*·?\s*Tab to amend`)
 
-	// Numbered choice selector: ❯ N. Option text
+	// Numbered choice selector: ❯ N. Option text. Tier: anchored-exact.
 	reChoiceSelector = regexp.MustCompile(`❯\s+\d+\.\s+`)
 
-	// Claude Code prompt: ❯ followed by text or empty
+	// Claude Code prompt: ❯ followed by text or empty. Tier: anchored-fuzzy.
 	rePrompt = regexp.MustCompile(`(?m)^.*❯\s*$`)
 
 	// Claude Code prompt with user input after it: ❯ <text>
-	// Claude Code prompt with user input: line starting with ❯ followed by text
+	// Claude Code prompt with user input: line starting with ❯ followed by text.
+	// Tier: anchored-fuzzy.
 	rePromptWithInput = regexp.MustCompile(`^\s*❯[\s\x{00a0}]+\S+`)
 
-	// Claude Code welcome box (idle at start): "Welcome back!" or "Claude Code v2"
+	// Claude Code welcome box (idle at start): "Welcome back!" or "Claude Code v2".
+	// Tier: case-insensitive prose.
 	reWelcomeBox = regexp.MustCompile(`(?i)claude code v[\d.]+`)
 
-	// Agent finished indicators: "N agents finished" or "Done (N tool uses"
+	// Agent finished indicators: "N agents finished" or "Done (N tool uses".
+	// Tier: anchored-fuzzy.
 	reAgentsDone = regexp.MustCompile(`\d+\s+agents?\s+finished`)
 
-	// Auto mode indicator in status bar
+	// Auto mode indicator in status bar. Tier: anchored-exact.
 	reAutoMode = regexp.MustCompile(`⏵⏵\s+auto mode`)
 
-	// Session label in status bar (divider line with label)
+	// Session label in status bar (divider line with label). Tier: anchored-fuzzy.
 	reSessionLabel = regexp.MustCompile(`─{3,}.*─{3,}`)
 
-	// Tool execution status: ⎿  Running… or ⎿  Waiting…
+	// Tool execution status: ⎿  Running… or ⎿  Waiting…. Tier: anchored-exact.
 	reToolRunning = regexp.MustCompile(`⎿\s+(Running|Waiting)…`)
 )
 
@@ -69,28 +81,28 @@ var (
 // Design Decisions:
 //
 // 1. Idle Timeout (30 seconds):
-//    - Reduced from 5 minutes to 30 seconds for faster idle detection
-//    - Rationale: Claude Code agents typically respond within seconds. If no activity
-//      for 30s, the agent is likely waiting for input, not actively working.
-//    - Graduated strength: 0.7 at 30s, 0.8 at 1min, 0.9 at 2min+ for increasing confidence
-//    - Balances responsiveness (show idle quickly) vs false positives (brief pauses during work)
+//   - Reduced from 5 minutes to 30 seconds for faster idle detection
+//   - Rationale: Claude Code agents typically respond within seconds. If no activity
+//     for 30s, the agent is likely waiting for input, not actively working.
+//   - Graduated strength: 0.7 at 30s, 0.8 at 1min, 0.9 at 2min+ for increasing confidence
+//   - Balances responsiveness (show idle quickly) vs false positives (brief pauses during work)
 //
 // 2. Time-Decay (100% → 50% → 20%):
-//    - Fresh signals (0-30s): 100% strength - recent activity is most relevant
-//    - Medium age (30s-2min): 50% strength - still relevant but fading
-//    - Old signals (>2min): 20% strength - historical context only
-//    - Prevents stale signals from dominating current state detection
+//   - Fresh signals (0-30s): 100% strength - recent activity is most relevant
+//   - Medium age (30s-2min): 50% strength - still relevant but fading
+//   - Old signals (>2min): 20% strength - historical context only
+//   - Prevents stale signals from dominating current state detection
 //
 // 3. Thread-Safety:
-//    - StateDetector is stateless except for the priority map (read-only after construction)
-//    - Safe for concurrent use by multiple goroutines
-//    - Signal structs are not mutated during detection (time-decay applied to copies)
-//    - Each detection call creates new Signal instances and result
+//   - StateDetector is stateless except for the priority map (read-only after construction)
+//   - Safe for concurrent use by multiple goroutines
+//   - Signal structs are not mutated during detection (time-decay applied to copies)
+//   - Each detection call creates new Signal instances and result
 //
 // 4. Priority System:
-//    - Higher priority states (error, permission) override lower priority (idle, unknown)
-//    - Exception: Lower priority states with 2x confidence can override (prevents false positives)
-//    - Idle priority 35 (raised from 30) allows strong idle signals to beat weak thinking signals
+//   - Higher priority states (error, permission) override lower priority (idle, unknown)
+//   - Exception: Lower priority states with 2x confidence can override (prevents false positives)
+//   - Idle priority 35 (raised from 30) allows strong idle signals to beat weak thinking signals
 type StateDetector struct {
 	// State priority: higher priority states override lower priority ones
 	statePriority map[types.AgentState]int
@@ -114,8 +126,8 @@ func NewStateDetector() *StateDetector {
 			// idle can now win when it has much stronger evidence (e.g., 0.7 vs 0.25
 			// after time-decay), preventing agents that are clearly idle from showing
 			// as "thinking" indefinitely.
-			types.StateIdle:              35,
-			types.StateUnknown:           10, // Lowest priority
+			types.StateIdle:    35,
+			types.StateUnknown: 10, // Lowest priority
 		},
 	}
 }
@@ -168,13 +180,18 @@ func (d *StateDetector) DetectFromContent(content string) *DetectionResult {
 
 // Signal represents a detected indicator of agent state
 type Signal struct {
-	State      types.AgentState
-	Strength   float64 // 0.0 to 1.0
-	Evidence   string
-	Timestamp  time.Time
+	State     types.AgentState
+	Strength  float64 // 0.0 to 1.0
+	Evidence  string
+	Timestamp time.Time
 }
 
-// collectSignals extracts state signals from activities
+// collectSignals extracts state signals from activities.
+//
+// Strength values are mapped to tier constants from types/confidence.go.
+// Item #22 (Phase 2 audit) replaced hand-picked numeric strengths with
+// these tiers to eliminate drift between parser and state — both packages
+// now stamp the same tier score on equivalent evidence.
 func (d *StateDetector) collectSignals(activities []*events.AgentActivityEvent) []*Signal {
 	signals := []*Signal{}
 
@@ -184,68 +201,68 @@ func (d *StateDetector) collectSignals(activities []*events.AgentActivityEvent) 
 			if promptType, ok := activity.Metadata["prompt_type"]; ok {
 				if promptType == "permission" {
 					signals = append(signals, &Signal{
-						State:      types.StateWaitingPermission,
-						Strength:   0.95,
-						Evidence:   "permission prompt detected",
-						Timestamp:  activity.Timestamp,
+						State:     types.StateWaitingPermission,
+						Strength:  types.ConfAnchoredExact, // 0.95
+						Evidence:  "permission prompt detected",
+						Timestamp: activity.Timestamp,
 					})
 				} else if promptType == "question" {
 					signals = append(signals, &Signal{
-						State:      types.StateAskingQuestion,
-						Strength:   0.9,
-						Evidence:   "question detected",
-						Timestamp:  activity.Timestamp,
+						State:     types.StateAskingQuestion,
+						Strength:  types.ConfAnchoredFuzzy, // 0.85 (was 0.9)
+						Evidence:  "question detected",
+						Timestamp: activity.Timestamp,
 					})
 				}
 			}
 
 		case "tool":
 			signals = append(signals, &Signal{
-				State:      types.StateExecuting,
-				Strength:   0.8,
-				Evidence:   fmt.Sprintf("tool execution: %s", activity.Metadata["tool_name"]),
-				Timestamp:  activity.Timestamp,
+				State:     types.StateExecuting,
+				Strength:  types.ConfAnchoredFuzzy, // 0.85 (was 0.8)
+				Evidence:  fmt.Sprintf("tool execution: %s", activity.Metadata["tool_name"]),
+				Timestamp: activity.Timestamp,
 			})
 
 		case "file":
 			signals = append(signals, &Signal{
-				State:      types.StateExecuting,
-				Strength:   0.7,
-				Evidence:   fmt.Sprintf("file operation: %s", activity.Metadata["operation"]),
-				Timestamp:  activity.Timestamp,
+				State:     types.StateExecuting,
+				Strength:  types.ConfAnchoredFuzzy, // 0.85 (was 0.7) — file ops anchor to `● Read/Edit/Write` same as tools
+				Evidence:  fmt.Sprintf("file operation: %s", activity.Metadata["operation"]),
+				Timestamp: activity.Timestamp,
 			})
 
 		case "chat":
 			role := activity.Metadata["role"]
 			if role == "user" {
 				signals = append(signals, &Signal{
-					State:      types.StateThinking,
-					Strength:   0.6,
-					Evidence:   "user message received",
-					Timestamp:  activity.Timestamp,
+					State:     types.StateThinking,
+					Strength:  types.ConfCaseProse, // 0.65 (was 0.6)
+					Evidence:  "user message received",
+					Timestamp: activity.Timestamp,
 				})
 			} else if role == "assistant" {
 				signals = append(signals, &Signal{
-					State:      types.StateThinking,
-					Strength:   0.5,
-					Evidence:   "assistant responding",
-					Timestamp:  activity.Timestamp,
+					State:     types.StateThinking,
+					Strength:  types.ConfSubstringKey, // 0.50 (was 0.5)
+					Evidence:  "assistant responding",
+					Timestamp: activity.Timestamp,
 				})
 			}
 		}
 	}
 
-	// Check for error signals
+	// Check for error signals — substring keyword scans on Content.
 	for _, activity := range activities {
 		contentLower := strings.ToLower(activity.Content)
 		if strings.Contains(contentLower, "error") ||
 			strings.Contains(contentLower, "failed") ||
 			strings.Contains(contentLower, "exception") {
 			signals = append(signals, &Signal{
-				State:      types.StateError,
-				Strength:   0.85,
-				Evidence:   "error keyword detected",
-				Timestamp:  activity.Timestamp,
+				State:     types.StateError,
+				Strength:  types.ConfSubstringKey, // 0.50 (was 0.85) — keyword scans are the weakest tier; the audit explicitly mapped substring scans to ConfSubstringKey
+				Evidence:  "error keyword detected",
+				Timestamp: activity.Timestamp,
 			})
 		}
 
@@ -253,15 +270,19 @@ func (d *StateDetector) collectSignals(activities []*events.AgentActivityEvent) 
 			strings.Contains(contentLower, "finished") ||
 			strings.Contains(contentLower, "done") {
 			signals = append(signals, &Signal{
-				State:      types.StateFinished,
-				Strength:   0.7,
-				Evidence:   "completion keyword detected",
-				Timestamp:  activity.Timestamp,
+				State:     types.StateFinished,
+				Strength:  types.ConfSubstringKey, // 0.50 (was 0.7)
+				Evidence:  "completion keyword detected",
+				Timestamp: activity.Timestamp,
 			})
 		}
 	}
 
-	// Check for idle state (no recent activity) - enhanced with time-decay
+	// Check for idle state (no recent activity) - enhanced with time-decay.
+	// Idle strength is duration-derived (not regex-tier) — the longer the
+	// silence, the stronger the signal. Kept as graduated values rather
+	// than tier constants because the underlying "evidence" is elapsed
+	// time, not a matched pattern.
 	if len(activities) > 0 {
 		lastActivity := activities[0]
 		timeSinceLastActivity := time.Since(lastActivity.Timestamp)
@@ -274,10 +295,10 @@ func (d *StateDetector) collectSignals(activities []*events.AgentActivityEvent) 
 				strength = 0.8 // More confident after 1 minute
 			}
 			signals = append(signals, &Signal{
-				State:      types.StateIdle,
-				Strength:   strength,
-				Evidence:   fmt.Sprintf("no activity for %v", timeSinceLastActivity.Round(time.Second)),
-				Timestamp:  time.Now(),
+				State:     types.StateIdle,
+				Strength:  strength,
+				Evidence:  fmt.Sprintf("no activity for %v", timeSinceLastActivity.Round(time.Second)),
+				Timestamp: time.Now(),
 			})
 		}
 	}
@@ -383,21 +404,20 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 	if isRealPermissionPrompt {
 		if hasAutoMode {
 			signals = append(signals, &Signal{
-				State:    types.StateExecuting,
-				Strength: 0.90,
-				Evidence: "permission prompt in auto mode (auto-approved)",
+				State:     types.StateExecuting,
+				Strength:  types.ConfAnchoredExact, // 0.95 (was 0.90) — permission footer + auto-mode are both anchored
+				Evidence:  "permission prompt in auto mode (auto-approved)",
 				Timestamp: now,
 			})
 		} else {
 			signals = append(signals, &Signal{
-				State:    types.StateWaitingPermission,
-				Strength: 0.95,
-				Evidence: "permission prompt footer (Esc to cancel · Tab to amend)",
+				State:     types.StateWaitingPermission,
+				Strength:  types.ConfAnchoredExact, // 0.95 — rePermissionFooter
+				Evidence:  "permission prompt footer (Esc to cancel · Tab to amend)",
 				Timestamp: now,
 			})
 		}
 	}
-
 
 	// Legacy permission patterns (only in recent output)
 	for _, line := range bottom10 {
@@ -406,9 +426,9 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 			strings.Contains(lineLower, "approve or deny") ||
 			strings.Contains(lineLower, "[y/n]") {
 			signals = append(signals, &Signal{
-				State:    types.StateWaitingPermission,
-				Strength: 0.90,
-				Evidence: "legacy permission prompt keywords",
+				State:     types.StateWaitingPermission,
+				Strength:  types.ConfCaseProse, // 0.65 (was 0.90) — substring scan; strong anchored signal lives in the footer above
+				Evidence:  "legacy permission prompt keywords",
 				Timestamp: now,
 			})
 			break
@@ -418,9 +438,9 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 	// --- 2. Active spinner → Running ---
 	if hasSpinnerInBottom {
 		signals = append(signals, &Signal{
-			State:    types.StateExecuting,
-			Strength: 0.95,
-			Evidence: "active spinner (✢) in recent output",
+			State:     types.StateExecuting,
+			Strength:  types.ConfAnchoredExact, // 0.95 — reSpinner / reToolRunning
+			Evidence:  "active spinner (✢) in recent output",
 			Timestamp: now,
 		})
 	}
@@ -444,9 +464,9 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 			}
 		}
 		signals = append(signals, &Signal{
-			State:    types.StateExecuting,
-			Strength: 0.70,
-			Evidence: fmt.Sprintf("tool invocation: %s", toolName),
+			State:     types.StateExecuting,
+			Strength:  types.ConfAnchoredFuzzy, // 0.85 (was 0.70) — reToolCall anchored shape + fuzzy tool-name capture
+			Evidence:  fmt.Sprintf("tool invocation: %s", toolName),
 			Timestamp: now,
 		})
 	}
@@ -457,18 +477,18 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 	if !hasEmptyPrompt && !hasPromptWithInput {
 		if reCompletionTimer.MatchString(content) {
 			signals = append(signals, &Signal{
-				State:    types.StateFinished,
-				Strength: 0.90,
-				Evidence: "completion timer (✻ Verb for T)",
+				State:     types.StateFinished,
+				Strength:  types.ConfAnchoredExact, // 0.95 (was 0.90) — reCompletionTimer is highly specific
+				Evidence:  "completion timer (✻ Verb for T)",
 				Timestamp: now,
 			})
 		}
 
 		if reRecap.MatchString(content) {
 			signals = append(signals, &Signal{
-				State:    types.StateFinished,
-				Strength: 0.85,
-				Evidence: "recap line (※ recap:)",
+				State:     types.StateFinished,
+				Strength:  types.ConfAnchoredFuzzy, // 0.85 — reRecap
+				Evidence:  "recap line (※ recap:)",
 				Timestamp: now,
 			})
 		}
@@ -480,16 +500,16 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 	if !hasSpinnerInBottom {
 		if hasEmptyPrompt && hasStatusBar {
 			signals = append(signals, &Signal{
-				State:    types.StateIdle,
-				Strength: 0.95,
-				Evidence: "empty â¯ prompt with status bar",
+				State:     types.StateIdle,
+				Strength:  types.ConfAnchoredExact, // 0.95 — empty prompt + status bar is strongest idle signal
+				Evidence:  "empty â¯ prompt with status bar",
 				Timestamp: now,
 			})
 		} else if hasEmptyPrompt {
 			signals = append(signals, &Signal{
-				State:    types.StateIdle,
-				Strength: 0.80,
-				Evidence: "empty â¯ prompt",
+				State:     types.StateIdle,
+				Strength:  types.ConfAnchoredFuzzy, // 0.85 (was 0.80)
+				Evidence:  "empty â¯ prompt",
 				Timestamp: now,
 			})
 		}
@@ -497,9 +517,9 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 	// Prompt with text after it (user typed something, session hasn't started)
 	if hasPromptWithInput && !hasSpinnerInBottom {
 		signals = append(signals, &Signal{
-			State:    types.StateIdle,
-			Strength: 0.90,
-			Evidence: "❯ prompt with user input",
+			State:     types.StateIdle,
+			Strength:  types.ConfAnchoredFuzzy, // 0.85 (was 0.90) — rePromptWithInput has a fuzzy tail
+			Evidence:  "❯ prompt with user input",
 			Timestamp: now,
 		})
 	}
@@ -507,9 +527,9 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 	// Welcome box → idle (fresh session)
 	if reWelcomeBox.MatchString(content) && hasEmptyPrompt {
 		signals = append(signals, &Signal{
-			State:    types.StateIdle,
-			Strength: 0.90,
-			Evidence: "welcome screen with empty prompt",
+			State:     types.StateIdle,
+			Strength:  types.ConfAnchoredFuzzy, // 0.85 (was 0.90) — reWelcomeBox is case-insensitive prose
+			Evidence:  "welcome screen with empty prompt",
 			Timestamp: now,
 		})
 	}
@@ -519,9 +539,9 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 		strings.Contains(contentLower, "ready for next") ||
 		strings.Contains(contentLower, "standing by") {
 		signals = append(signals, &Signal{
-			State:    types.StateIdle,
-			Strength: 0.75,
-			Evidence: "legacy idle status indicator",
+			State:     types.StateIdle,
+			Strength:  types.ConfSubstringKey, // 0.50 (was 0.75) — substring keyword tier
+			Evidence:  "legacy idle status indicator",
 			Timestamp: now,
 		})
 	}
@@ -531,9 +551,9 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 		lastLine := lines[len(lines)-1]
 		if strings.HasSuffix(lastLine, "> ") || strings.HasSuffix(lastLine, "$ ") {
 			signals = append(signals, &Signal{
-				State:    types.StateIdle,
-				Strength: 0.85,
-				Evidence: "waiting at shell prompt",
+				State:     types.StateIdle,
+				Strength:  types.ConfAnchoredFuzzy, // 0.85 — end-of-line anchor on shell prompt suffix
+				Evidence:  "waiting at shell prompt",
 				Timestamp: now,
 			})
 		}
@@ -555,16 +575,16 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 
 	if hasQuestionBullet && hasEmptyPrompt {
 		signals = append(signals, &Signal{
-			State:    types.StateAskingQuestion,
-			Strength: 0.95,
-			Evidence: fmt.Sprintf("Claude question with empty prompt: %s", questionText),
+			State:     types.StateAskingQuestion,
+			Strength:  types.ConfAnchoredExact, // 0.95 — `● ... ?` AND empty prompt is unambiguous
+			Evidence:  fmt.Sprintf("Claude question with empty prompt: %s", questionText),
 			Timestamp: now,
 		})
 	} else if hasQuestionBullet {
 		signals = append(signals, &Signal{
-			State:    types.StateAskingQuestion,
-			Strength: 0.70,
-			Evidence: fmt.Sprintf("Claude question bullet: %s", questionText),
+			State:     types.StateAskingQuestion,
+			Strength:  types.ConfAnchoredFuzzy, // 0.85 (was 0.70)
+			Evidence:  fmt.Sprintf("Claude question bullet: %s", questionText),
 			Timestamp: now,
 		})
 	}
@@ -600,16 +620,16 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 
 		if hasQuestionInLastLines && hasAskUserQuestionTool {
 			signals = append(signals, &Signal{
-				State:    types.StateAskingQuestion,
-				Strength: 0.90,
-				Evidence: "question with tool call in recent output",
+				State:     types.StateAskingQuestion,
+				Strength:  types.ConfCaseProse, // 0.65 (was 0.90) — substring scan
+				Evidence:  "question with tool call in recent output",
 				Timestamp: now,
 			})
 		} else if hasQuestionInLastLines {
 			signals = append(signals, &Signal{
-				State:    types.StateAskingQuestion,
-				Strength: 0.60,
-				Evidence: "question pattern in recent output",
+				State:     types.StateAskingQuestion,
+				Strength:  types.ConfSubstringKey, // 0.50 (was 0.60)
+				Evidence:  "question pattern in recent output",
 				Timestamp: now,
 			})
 		}
@@ -628,9 +648,9 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 	}
 	if hasErrorInBottom {
 		signals = append(signals, &Signal{
-			State:    types.StateError,
-			Strength: 0.85,
-			Evidence: "error keyword in content",
+			State:     types.StateError,
+			Strength:  types.ConfCaseProse, // 0.65 (was 0.85) — substring "error:"/"failed:"/"exception"
+			Evidence:  "error keyword in content",
 			Timestamp: now,
 		})
 	}
@@ -638,9 +658,9 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 	// --- 7. Legacy execution indicators (backward compat) ---
 	if strings.Contains(contentLower, "executing") {
 		signals = append(signals, &Signal{
-			State:    types.StateExecuting,
-			Strength: 0.70,
-			Evidence: "legacy execution keyword",
+			State:     types.StateExecuting,
+			Strength:  types.ConfSubstringKey, // 0.50 (was 0.70)
+			Evidence:  "legacy execution keyword",
 			Timestamp: now,
 		})
 	}
@@ -650,9 +670,9 @@ func (d *StateDetector) collectSignalsFromContent(content string) []*Signal {
 		strings.Contains(contentLower, "task finished") ||
 		strings.Contains(contentLower, "all done") {
 		signals = append(signals, &Signal{
-			State:    types.StateFinished,
-			Strength: 0.75,
-			Evidence: "legacy completion keyword",
+			State:     types.StateFinished,
+			Strength:  types.ConfSubstringKey, // 0.50 (was 0.75)
+			Evidence:  "legacy completion keyword",
 			Timestamp: now,
 		})
 	}

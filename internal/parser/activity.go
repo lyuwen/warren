@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lfu/warren/internal/events"
+	"github.com/lfu/warren/internal/types"
 )
 
 // ActivityParser parses captured pane content into structured activity events.
@@ -44,11 +45,11 @@ import (
 // (tracked separately as Batch 3 #19).
 type ActivityParser struct {
 	// Level 1: permission anchors. Most specific first.
-	permissionAnchors []*regexp.Regexp
+	permissionAnchors []tieredRegex
 
 	// Level 2: question detection patterns. Applied only to the last 10
 	// non-empty lines.
-	questionLineAnchors []*regexp.Regexp
+	questionLineAnchors []tieredRegex
 
 	// Level 3: file operation extractors. Each carries an operation tag
 	// ("read"/"edit"/"write") because the regex alone cannot disambiguate
@@ -69,83 +70,108 @@ type ActivityParser struct {
 
 	// Permission content scan (whole-content, NOT per-line) for legacy
 	// "permission required" / "[y/n]" prose that does not start with `●`.
-	permissionContentAnchors []*regexp.Regexp
+	permissionContentAnchors []tieredRegex
 
 	// Block-level question shapes (whole-content): the multiple-choice
 	// detector ("1. ..." / "2. ..." within the trailing 10 non-empty lines)
 	// and the natural-language fallbacks ("Would you like...?", etc.).
 	multipleChoiceLine *regexp.Regexp
-	naturalQuestion    []*regexp.Regexp
+	naturalQuestion    []tieredRegex
 }
 
 type fileExtractor struct {
 	re        *regexp.Regexp
-	operation string // "read" / "edit" / "write"
+	operation string  // "read" / "edit" / "write"
+	tier      float64 // ConfAnchoredFuzzy / ConfCaseProse — see types/confidence.go
 }
 
 type toolExtractor struct {
 	re   *regexp.Regexp
-	name string // "bash" / "agent" / "skill" / "lsp" / "websearch" / "webfetch" / "grep" / "glob"
+	name string  // "bash" / "agent" / "skill" / "lsp" / "websearch" / "webfetch" / "grep" / "glob" / "notebookedit"
+	tier float64 // ConfAnchoredExact / ConfCaseProse — see types/confidence.go
 }
 
-// NewActivityParser creates a new activity parser
+// tieredRegex pairs a regex with its confidence tier (see
+// `internal/types/confidence.go`). Used for the permission/question anchors
+// so the precedence ladder can stamp the matched line's tier onto the
+// emitted event without an out-of-band lookup.
+type tieredRegex struct {
+	re   *regexp.Regexp
+	tier float64
+}
+
+// NewActivityParser creates a new activity parser.
+//
+// Every regex below is annotated with its confidence tier from
+// `internal/types/confidence.go`. The tier is propagated to the emitted
+// `events.AgentActivityEvent.Confidence` so downstream consumers (state
+// detector, UI) see a per-event score derived mechanically from the regex
+// shape, not a hand-picked number. See Phase 2 audit Item #22.
 func NewActivityParser() *ActivityParser {
 	return &ActivityParser{
-		permissionAnchors: []*regexp.Regexp{
+		permissionAnchors: []tieredRegex{
 			// Real Claude Code UI: "Esc to cancel · Tab to amend" footer
-			regexp.MustCompile(`Esc to cancel\s*·?\s*Tab to amend`),
+			{re: regexp.MustCompile(`Esc to cancel\s*·?\s*Tab to amend`), tier: types.ConfAnchoredExact},
 			// Real Claude Code UI: choice selector "❯ N. Option"
-			regexp.MustCompile(`^\s*❯\s+\d+\.\s+`),
+			{re: regexp.MustCompile(`^\s*❯\s+\d+\.\s+`), tier: types.ConfAnchoredExact},
 			// Real Claude Code UI: "Allowed by auto mode"
-			regexp.MustCompile(`(?i)Allowed by auto mode`),
+			{re: regexp.MustCompile(`(?i)Allowed by auto mode`), tier: types.ConfCaseProse},
 		},
-		questionLineAnchors: []*regexp.Regexp{
+		questionLineAnchors: []tieredRegex{
 			// Real Claude Code UI: assistant question — `● ... ?` ending in '?'.
-			regexp.MustCompile(`^\s*●\s+.+\?\s*$`),
+			{re: regexp.MustCompile(`^\s*●\s+.+\?\s*$`), tier: types.ConfAnchoredFuzzy},
 			// Legacy AskUserQuestion tool surface.
-			regexp.MustCompile(`(?i)AskUserQuestion`),
+			{re: regexp.MustCompile(`(?i)AskUserQuestion`), tier: types.ConfCaseProse},
 			// Legacy question shapes (single-line).
-			regexp.MustCompile(`^What would you like .*\?$`),
-			regexp.MustCompile(`^Should I .*\?$`),
-			regexp.MustCompile(`^Would you like .*\?$`),
-			regexp.MustCompile(`^Do you want .*\?$`),
-			regexp.MustCompile(`^How should I .*\?$`),
-			regexp.MustCompile(`^Which .*would you prefer\?$`),
+			{re: regexp.MustCompile(`^What would you like .*\?$`), tier: types.ConfAnchoredFuzzy},
+			{re: regexp.MustCompile(`^Should I .*\?$`), tier: types.ConfAnchoredFuzzy},
+			{re: regexp.MustCompile(`^Would you like .*\?$`), tier: types.ConfAnchoredFuzzy},
+			{re: regexp.MustCompile(`^Do you want .*\?$`), tier: types.ConfAnchoredFuzzy},
+			{re: regexp.MustCompile(`^How should I .*\?$`), tier: types.ConfAnchoredFuzzy},
+			{re: regexp.MustCompile(`^Which .*would you prefer\?$`), tier: types.ConfAnchoredFuzzy},
 		},
 		fileExtractors: []fileExtractor{
 			// `● Read <path-or-summary>`. The argument is free-form because
 			// Claude Code emits both `● Read /foo/bar.go` and
 			// `● Read 3 files`; the captured group is whatever follows.
-			{re: regexp.MustCompile(`^\s*●\s+Read\s+(.+)`), operation: "read"},
-			{re: regexp.MustCompile(`^\s*●\s+Edit\((.+?)\)`), operation: "edit"},
-			{re: regexp.MustCompile(`^\s*●\s+Write\((.+?)\)`), operation: "write"},
+			{re: regexp.MustCompile(`^\s*●\s+Read\s+(.+)`), operation: "read", tier: types.ConfAnchoredFuzzy},
+			{re: regexp.MustCompile(`^\s*●\s+Edit\((.+?)\)`), operation: "edit", tier: types.ConfAnchoredFuzzy},
+			{re: regexp.MustCompile(`^\s*●\s+Write\((.+?)\)`), operation: "write", tier: types.ConfAnchoredFuzzy},
 			// Legacy "reading file: <path>" prose lines (kept for backward
 			// compatibility with older captures).
-			{re: regexp.MustCompile(`(?i)^reading\s+file:\s+(.+)$`), operation: "read"},
-			{re: regexp.MustCompile(`(?i)^editing\s+file:\s+(.+)$`), operation: "edit"},
-			{re: regexp.MustCompile(`(?i)^writing\s+file:\s+(.+)$`), operation: "write"},
+			{re: regexp.MustCompile(`(?i)^reading\s+file:\s+(.+)$`), operation: "read", tier: types.ConfCaseProse},
+			{re: regexp.MustCompile(`(?i)^editing\s+file:\s+(.+)$`), operation: "edit", tier: types.ConfCaseProse},
+			{re: regexp.MustCompile(`(?i)^writing\s+file:\s+(.+)$`), operation: "write", tier: types.ConfCaseProse},
 		},
 		toolExtractors: []toolExtractor{
-			{re: regexp.MustCompile(`^\s*●\s+Bash\(`), name: "bash"},
-			{re: regexp.MustCompile(`^\s*●\s+Agent\(`), name: "agent"},
-			{re: regexp.MustCompile(`^\s*●\s+Skill\(`), name: "skill"},
-			{re: regexp.MustCompile(`^\s*●\s+LSP\(`), name: "lsp"},
-			{re: regexp.MustCompile(`^\s*●\s+WebSearch\(`), name: "websearch"},
-			{re: regexp.MustCompile(`^\s*●\s+WebFetch\(`), name: "webfetch"},
-			{re: regexp.MustCompile(`^\s*●\s+Grep\(`), name: "grep"},
-			{re: regexp.MustCompile(`^\s*●\s+Glob\(`), name: "glob"},
+			{re: regexp.MustCompile(`^\s*●\s+Bash\(`), name: "bash", tier: types.ConfAnchoredExact},
+			{re: regexp.MustCompile(`^\s*●\s+Agent\(`), name: "agent", tier: types.ConfAnchoredExact},
+			{re: regexp.MustCompile(`^\s*●\s+Skill\(`), name: "skill", tier: types.ConfAnchoredExact},
+			{re: regexp.MustCompile(`^\s*●\s+LSP\(`), name: "lsp", tier: types.ConfAnchoredExact},
+			{re: regexp.MustCompile(`^\s*●\s+WebSearch\(`), name: "websearch", tier: types.ConfAnchoredExact},
+			{re: regexp.MustCompile(`^\s*●\s+WebFetch\(`), name: "webfetch", tier: types.ConfAnchoredExact},
+			{re: regexp.MustCompile(`^\s*●\s+Grep\(`), name: "grep", tier: types.ConfAnchoredExact},
+			{re: regexp.MustCompile(`^\s*●\s+Glob\(`), name: "glob", tier: types.ConfAnchoredExact},
+			// NotebookEdit was missing from this table before Batch 3a — the
+			// state detector's `reToolCall` already included it, so the
+			// parser/state divergence reported by audit Item #19 surfaced
+			// most concretely here: `● NotebookEdit(...)` was emitted as a
+			// chat fallback (level 5) instead of a tool event, while state
+			// correctly read it as StateExecuting. The contract test in
+			// `internal/types/contract_test.go` now pins both sides.
+			{re: regexp.MustCompile(`^\s*●\s+NotebookEdit\(`), name: "notebookedit", tier: types.ConfAnchoredExact},
 			// Legacy "Bash tool / LSP tool / WebSearch tool" prose. Kept
 			// case-insensitive and substring-matching to preserve backward
 			// compatibility with older captures (audit specifically left
 			// these in scope and only flagged `(?i)running\s+tests` and
 			// `(?i)executing\s+command:` as over-broad).
-			{re: regexp.MustCompile(`(?i)bash\s+tool`), name: "bash"},
-			{re: regexp.MustCompile(`(?i)lsp\s+tool`), name: "lsp"},
-			{re: regexp.MustCompile(`(?i)websearch\s+tool`), name: "websearch"},
+			{re: regexp.MustCompile(`(?i)bash\s+tool`), name: "bash", tier: types.ConfCaseProse},
+			{re: regexp.MustCompile(`(?i)lsp\s+tool`), name: "lsp", tier: types.ConfCaseProse},
+			{re: regexp.MustCompile(`(?i)websearch\s+tool`), name: "websearch", tier: types.ConfCaseProse},
 			// Legacy "executing command:" prose anchored to start-of-line.
 			// The unanchored `(?i)executing\s+command:` it replaces matched
 			// inside chat lines (audit #2: duplicate emission).
-			{re: regexp.MustCompile(`(?i)^executing\s+command:`), name: "bash"},
+			{re: regexp.MustCompile(`(?i)^executing\s+command:`), name: "bash", tier: types.ConfCaseProse},
 			// Note: the unanchored `(?i)running\s+tests` from the legacy
 			// patterns is deliberately dropped — it fired on plain chat like
 			// "I'm running tests now" and produced spurious tool events.
@@ -154,21 +180,21 @@ func NewActivityParser() *ActivityParser {
 		chatPrefixUser:   regexp.MustCompile(`^\s*❯\s+.+`),
 		chatLegacyUser:   regexp.MustCompile(`(?i)^user:`),
 		chatLegacyAssist: regexp.MustCompile(`(?i)^(assistant|claude):`),
-		permissionContentAnchors: []*regexp.Regexp{
-			regexp.MustCompile(`(?i)permission\s+required`),
-			regexp.MustCompile(`(?i)approve\s+or\s+deny`),
-			regexp.MustCompile(`(?i)waiting\s+for\s+approval`),
-			regexp.MustCompile(`(?i)\[y/n\]`),
-			regexp.MustCompile(`(?i)allow\s+this\s+action`),
+		permissionContentAnchors: []tieredRegex{
+			{re: regexp.MustCompile(`(?i)permission\s+required`), tier: types.ConfCaseProse},
+			{re: regexp.MustCompile(`(?i)approve\s+or\s+deny`), tier: types.ConfCaseProse},
+			{re: regexp.MustCompile(`(?i)waiting\s+for\s+approval`), tier: types.ConfCaseProse},
+			{re: regexp.MustCompile(`(?i)\[y/n\]`), tier: types.ConfCaseProse},
+			{re: regexp.MustCompile(`(?i)allow\s+this\s+action`), tier: types.ConfCaseProse},
 		},
 		multipleChoiceLine: regexp.MustCompile(`^\d+\.\s+.+$`),
-		naturalQuestion: []*regexp.Regexp{
-			regexp.MustCompile(`^What would you like .*\?$`),
-			regexp.MustCompile(`^Should I .*\?$`),
-			regexp.MustCompile(`^Would you like .*\?$`),
-			regexp.MustCompile(`^Do you want .*\?$`),
-			regexp.MustCompile(`^How should I .*\?$`),
-			regexp.MustCompile(`^Which .*would you prefer\?$`),
+		naturalQuestion: []tieredRegex{
+			{re: regexp.MustCompile(`^What would you like .*\?$`), tier: types.ConfAnchoredFuzzy},
+			{re: regexp.MustCompile(`^Should I .*\?$`), tier: types.ConfAnchoredFuzzy},
+			{re: regexp.MustCompile(`^Would you like .*\?$`), tier: types.ConfAnchoredFuzzy},
+			{re: regexp.MustCompile(`^Do you want .*\?$`), tier: types.ConfAnchoredFuzzy},
+			{re: regexp.MustCompile(`^How should I .*\?$`), tier: types.ConfAnchoredFuzzy},
+			{re: regexp.MustCompile(`^Which .*would you prefer\?$`), tier: types.ConfAnchoredFuzzy},
 		},
 	}
 }
@@ -253,44 +279,53 @@ func (p *ActivityParser) Parse(agentID string, content string) (*ParseResult, er
 		}
 	}
 
-	// Confidence: same shape as the previous implementation so existing
-	// thresholds keep meaning what they meant before.
+	// Aggregate Confidence (ParseResult.Confidence): the mean of the
+	// per-event confidence values for the events we emitted. Callers like
+	// `state.DetectFromActivities` consume this aggregate; mean gives a
+	// balanced score that reflects the mix of strong and weak signals in
+	// the capture, rather than max (which would mask a sea of weak chat
+	// events under one strong tool match) or min (which would let one
+	// substring-keyword chat event drag a strong capture down).
 	if len(result.Activities) > 0 {
-		result.Confidence = 0.8
-		if len(result.DetectedTypes) > 2 {
-			result.Confidence = 0.95
+		var sum float64
+		for _, a := range result.Activities {
+			sum += a.Confidence
 		}
+		result.Confidence = sum / float64(len(result.Activities))
 	}
 
 	return result, nil
 }
 
 // classifyLine runs the precedence ladder over a single trimmed line.
-// Returns nil when the line matches no level.
+// Returns nil when the line matches no level. Every emitted event carries
+// the matching regex's confidence tier (see internal/types/confidence.go).
 func (p *ActivityParser) classifyLine(agentID, line string, _ int, tailQuestionLines map[string]bool, ts time.Time) *events.AgentActivityEvent {
 	// Level 1: Permission anchors (most specific).
-	for _, re := range p.permissionAnchors {
-		if re.MatchString(line) {
+	for _, tr := range p.permissionAnchors {
+		if tr.re.MatchString(line) {
 			return &events.AgentActivityEvent{
 				AgentID:      agentID,
 				ActivityType: "prompt",
 				Content:      line,
 				Metadata:     map[string]string{"prompt_type": "permission"},
 				Timestamp:    ts,
+				Confidence:   tr.tier,
 			}
 		}
 	}
 
 	// Level 2: Question — assistant `● ... ?` line in the tail window.
 	if tailQuestionLines[line] {
-		for _, re := range p.questionLineAnchors {
-			if re.MatchString(line) {
+		for _, tr := range p.questionLineAnchors {
+			if tr.re.MatchString(line) {
 				return &events.AgentActivityEvent{
 					AgentID:      agentID,
 					ActivityType: "prompt",
 					Content:      line,
 					Metadata:     map[string]string{"prompt_type": "question"},
 					Timestamp:    ts,
+					Confidence:   tr.tier,
 				}
 			}
 		}
@@ -311,7 +346,8 @@ func (p *ActivityParser) classifyLine(agentID, line string, _ int, tailQuestionL
 					"operation": fe.operation,
 					"file_path": filePath,
 				},
-				Timestamp: ts,
+				Timestamp:  ts,
+				Confidence: fe.tier,
 			}
 		}
 	}
@@ -328,11 +364,14 @@ func (p *ActivityParser) classifyLine(agentID, line string, _ int, tailQuestionL
 				Content:      line,
 				Metadata:     map[string]string{"tool_name": te.name},
 				Timestamp:    ts,
+				Confidence:   te.tier,
 			}
 		}
 	}
 
-	// Level 5: Chat fallback.
+	// Level 5: Chat fallback. Chat lines are the weakest signal in the
+	// ladder — they only match because nothing more specific did. Use the
+	// substring-keyword tier.
 	switch {
 	case p.chatPrefixCC.MatchString(line):
 		return chatEvent(agentID, line, "assistant", ts)
@@ -354,6 +393,7 @@ func chatEvent(agentID, line, role string, ts time.Time) *events.AgentActivityEv
 		Content:      line,
 		Metadata:     map[string]string{"role": role},
 		Timestamp:    ts,
+		Confidence:   types.ConfSubstringKey,
 	}
 }
 
@@ -383,14 +423,15 @@ func lastNonEmptyLineSet(lines []string, n int) map[string]bool {
 // scanPermissionContent looks for legacy "permission required" style prose
 // that doesn't anchor to a `●` line. Emits at most one event.
 func (p *ActivityParser) scanPermissionContent(agentID, content string, ts time.Time) *events.AgentActivityEvent {
-	for _, re := range p.permissionContentAnchors {
-		if re.MatchString(content) {
+	for _, tr := range p.permissionContentAnchors {
+		if tr.re.MatchString(content) {
 			return &events.AgentActivityEvent{
 				AgentID:      agentID,
 				ActivityType: "prompt",
-				Content:      re.FindString(content),
+				Content:      tr.re.FindString(content),
 				Metadata:     map[string]string{"prompt_type": "permission"},
 				Timestamp:    ts,
+				Confidence:   tr.tier,
 			}
 		}
 	}
@@ -421,6 +462,10 @@ func (p *ActivityParser) scanMultipleChoice(agentID string, lines []string, ts t
 			"option_count":  fmt.Sprintf("%d", len(options)),
 		},
 		Timestamp: ts,
+		// Multiple-choice detection requires ≥2 numbered options in the
+		// trailing 10 lines — a strong structural signal. Anchored-exact
+		// tier mirrors the permission footer.
+		Confidence: types.ConfAnchoredExact,
 	}
 }
 
@@ -438,14 +483,15 @@ func (p *ActivityParser) scanNaturalQuestions(agentID string, lines []string, ts
 			strings.HasPrefix(line, "-") {
 			continue
 		}
-		for _, re := range p.naturalQuestion {
-			if re.MatchString(line) {
+		for _, tr := range p.naturalQuestion {
+			if tr.re.MatchString(line) {
 				out = append(out, &events.AgentActivityEvent{
 					AgentID:      agentID,
 					ActivityType: "prompt",
 					Content:      line,
 					Metadata:     map[string]string{"prompt_type": "question"},
 					Timestamp:    ts,
+					Confidence:   tr.tier,
 				})
 				break
 			}

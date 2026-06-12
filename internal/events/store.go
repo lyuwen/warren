@@ -35,33 +35,48 @@ func (e *Event) UnmarshalData(v interface{}) error {
 	return json.Unmarshal([]byte(e.Data), v)
 }
 
-// AgentActivityEvent represents an activity performed by an agent
+// AgentActivityEvent represents an activity performed by an agent.
+//
+// `Confidence` is the un-decayed regex-tier score at emission time
+// (0.0-1.0). A zero value means "unscored / legacy event" — NOT "zero
+// confidence." Downstream consumers that need a time-decayed view can apply
+// decay themselves; the value stored here is the parser's belief at the
+// moment the line was matched. Tier constants live in
+// `internal/types/confidence.go` (`ConfAnchoredExact`, `ConfAnchoredFuzzy`,
+// `ConfCaseProse`, `ConfSubstringKey`).
 type AgentActivityEvent struct {
 	AgentID      string            `json:"agent_id"`
 	ActivityType string            `json:"activity_type"` // "chat", "file", "tool", "prompt"
 	Content      string            `json:"content"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
 	Timestamp    time.Time         `json:"timestamp"`
+	Confidence   float64           `json:"confidence,omitempty"`
 }
 
 // NotificationEvent represents a notification that requires user attention
 type NotificationEvent struct {
-	AgentID      string            `json:"agent_id"`
-	NotifType    string            `json:"notif_type"` // "permission_required", "question_asked", "finished", "error"
-	Message      string            `json:"message"`
-	Consumed     bool              `json:"consumed"`
-	ConsumedAt   *time.Time        `json:"consumed_at,omitempty"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
-	Timestamp    time.Time         `json:"timestamp"`
+	AgentID    string            `json:"agent_id"`
+	NotifType  string            `json:"notif_type"` // "permission_required", "question_asked", "finished", "error"
+	Message    string            `json:"message"`
+	Consumed   bool              `json:"consumed"`
+	ConsumedAt *time.Time        `json:"consumed_at,omitempty"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
+	Timestamp  time.Time         `json:"timestamp"`
 }
 
-// StateChangeEvent represents a state transition
+// StateChangeEvent represents a state transition.
+//
+// `Confidence` carries the detector's confidence in the target state at
+// transition time. As with AgentActivityEvent, a zero value means "unscored
+// / legacy event," NOT "zero confidence." It is the un-decayed score from
+// `DetectionResult.Confidence` at emission time.
 type StateChangeEvent struct {
-	AgentID   string    `json:"agent_id"`
-	FromState string    `json:"from_state"`
-	ToState   string    `json:"to_state"`
-	Reason    string    `json:"reason,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
+	AgentID    string    `json:"agent_id"`
+	FromState  string    `json:"from_state"`
+	ToState    string    `json:"to_state"`
+	Reason     string    `json:"reason,omitempty"`
+	Timestamp  time.Time `json:"timestamp"`
+	Confidence float64   `json:"confidence,omitempty"`
 }
 
 // Store manages event persistence

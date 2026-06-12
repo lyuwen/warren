@@ -388,15 +388,19 @@ func TestWarrenStateTransition(t *testing.T) {
 	// Add session
 	warren.AddSession("test-agent", "%0")
 
-	// Manually update session state
+	// Manually seed session state.
 	warren.mu.Lock()
 	warren.sessions["test-agent"].CurrentState = StateIdle
 	warren.mu.Unlock()
 
-	// Process state change that triggers notification (idle -> waiting_permission)
-	err = warren.notifEngine.ProcessStateChange("test-agent", "idle", "waiting_permission")
-	if err != nil {
-		t.Errorf("Failed to process state change: %v", err)
+	// Drive the transition through the new `transitionTo` helper (Batch
+	// 3a Item #5). Previously this test routed through
+	// `notifEngine.ProcessStateChange`, which doubled as state-event
+	// writer AND notification dispatcher. Item #5 split those roles:
+	// transitionTo is now the only writer of state-change events, and the
+	// notification engine is the only writer of notification events.
+	if err := warren.transitionTo("test-agent", StateWaitingPermission, "notification: permission_required", 0.95); err != nil {
+		t.Errorf("Failed to transition state: %v", err)
 	}
 
 	// Verify state change event was stored
@@ -412,5 +416,18 @@ func TestWarrenStateTransition(t *testing.T) {
 
 	if len(stateEvents) != 1 {
 		t.Errorf("Expected 1 state change event, got %d", len(stateEvents))
+	}
+
+	// And verify the notification side fired too (notify-worthy target).
+	notifEvents, err := warren.eventStore.Query(events.QueryOptions{
+		AgentID:   "test-agent",
+		EventType: events.EventTypeNotification,
+		Limit:     10,
+	})
+	if err != nil {
+		t.Errorf("Failed to query notification events: %v", err)
+	}
+	if len(notifEvents) != 1 {
+		t.Errorf("Expected 1 notification event, got %d", len(notifEvents))
 	}
 }

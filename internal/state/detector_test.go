@@ -168,31 +168,42 @@ func TestStateDetector_DetectFromContent(t *testing.T) {
 			name:          "permission prompt",
 			content:       "Permission required to proceed [y/n]",
 			expectedState: types.StateWaitingPermission,
-			minConfidence: 0.9,
+			// Substring-keyword tier (0.50) — legacy "[y/n]" / "permission required"
+			// prose is the case-insensitive-prose match. The anchored footer
+			// "Esc to cancel · Tab to amend" path would score 0.95 but this
+			// fixture doesn't include it.
+			minConfidence: 0.5,
 		},
 		{
 			name:          "question",
 			content:       "Should I continue with this approach?",
 			expectedState: types.StateAskingQuestion,
-			minConfidence: 0.6, // Lower confidence without AskUserQuestion tool
+			// Substring-keyword tier (0.50) — the "should i ... ?" substring
+			// scan without an AskUserQuestion tool hit lands in the weakest
+			// tier per the Batch 3a confidence-tier mapping.
+			minConfidence: 0.5,
 		},
 		{
 			name:          "error",
 			content:       "Error: connection failed",
 			expectedState: types.StateError,
-			minConfidence: 0.8,
+			// Case-prose tier (0.65) — substring "error:" / "failed:" scan.
+			minConfidence: 0.6,
 		},
 		{
 			name:          "executing",
 			content:       "Executing command: npm test",
 			expectedState: types.StateExecuting,
-			minConfidence: 0.7,
+			// Substring-keyword tier (0.50) — legacy "executing" substring.
+			minConfidence: 0.5,
 		},
 		{
 			name:          "finished",
 			content:       "Task finished successfully",
 			expectedState: types.StateFinished,
-			minConfidence: 0.7,
+			// Substring-keyword tier (0.50) — legacy "task finished" / "all done"
+			// substring; the anchored ✻ completion timer would score 0.95.
+			minConfidence: 0.5,
 		},
 	}
 
@@ -247,12 +258,12 @@ func TestStateDetector_ShouldTransition(t *testing.T) {
 	detector := NewStateDetector()
 
 	tests := []struct {
-		name           string
-		currentState   types.AgentState
-		newState       types.AgentState
-		confidence     float64
-		minConfidence  float64
-		shouldTransit  bool
+		name          string
+		currentState  types.AgentState
+		newState      types.AgentState
+		confidence    float64
+		minConfidence float64
+		shouldTransit bool
 	}{
 		{
 			name:          "high confidence, different state, higher priority",
@@ -371,13 +382,15 @@ func TestStateDetector_IdleDetection_PromptSuffix(t *testing.T) {
 			name:          "waiting for input indicator",
 			content:       "Waiting for input from user",
 			expectedState: types.StateIdle,
-			minConfidence: 0.75,
+			// Substring-keyword tier (0.50) — legacy "waiting for input" scan.
+			minConfidence: 0.5,
 		},
 		{
 			name:          "standing by indicator",
 			content:       "Standing by for next command",
 			expectedState: types.StateIdle,
-			minConfidence: 0.75,
+			// Substring-keyword tier (0.50) — legacy "standing by" scan.
+			minConfidence: 0.5,
 		},
 	}
 
@@ -511,9 +524,9 @@ func TestStateDetector_TimeDecay(t *testing.T) {
 	detector := NewStateDetector()
 
 	tests := []struct {
-		name        string
-		signalAge   time.Duration
-		baseStrength float64
+		name          string
+		signalAge     time.Duration
+		baseStrength  float64
 		expectedDecay float64
 	}{
 		{
